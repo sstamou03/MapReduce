@@ -22,8 +22,8 @@ services:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: 12345678
     ports:
-      - "9000:9000" # Το API port (για να μιλάει ο κώδικάς σας με το MinIO)
-      - "9001:9001" # Το UI port (για να μπαίνεις από τον browser)
+      - "9000:9000" # api port
+      - "9001:9001" # ui port 
     volumes:
       - miniodata:/data
 
