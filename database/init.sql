@@ -1,3 +1,10 @@
+/*
+Initialization script for the MapReduce PostgreSQL database.
+This script automatically executes when the database container starts for the first time.
+It defines the custom ENUM types and creates the 'jobs' and 'tasks' tables,
+which act as the single source of truth for the cluster's state.
+*/
+
 CREATE TYPE job_status AS ENUM ('SUBMITTED', 'RUNNING', 'COMPLETED', 'FAILED');
 CREATE TYPE task_status AS ENUM ('PENDING', 'RUNNING', 'RETRYING', 'COMPLETED', 'FAILED');
 CREATE TYPE task_type AS ENUM ('MAP', 'REDUCE');
