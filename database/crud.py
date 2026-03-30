@@ -57,6 +57,39 @@ def update_job_status(db: Session, job_id: str, new_status: JobStatus) -> Job:
         db.refresh(job)
     return job
 
+def delete_job(db: Session, job_id: str) -> bool:
+    """
+    Called by the UI service (DELETE /jobs/{job_id}) to abort a job.
+    Deletes all tasks linked to the job first, then deletes the job itself.
+    Returns True if the job was found and deleted, False otherwise.
+    """
+
+    job = get_job(db, job_id)
+    if not job:
+        return False
+    # Delete all tasks that belong to this job first
+    db.query(Task).filter(Task.job_id == job_id).delete()
+    db.delete(job)
+    db.commit()
+    return True
+
+def update_job_output_ref(db: Session, job_id: str, output_code_ref: str) -> Job:
+    """
+    Called by the Manager service when all reducers finish successfully.
+    Saves the final output MinIO reference so the user can retrieve the result.
+    """
+
+    job = get_job(db, job_id)
+    if job:
+        job.output_code_ref = output_code_ref
+        db.commit()
+        db.refresh(job)
+    return job
+
+# NOTE: The POST /admin/nodes endpoint is NOT handled here.
+# Node configuration should be managed by the Manager service (e.g., in-memory or via Kubernetes ConfigMaps),
+# not through the database.
+
 #tasks
 
 def create_task(db: Session, job_id: str, task_type: TaskType, input_partition_ref: str) -> Task:
