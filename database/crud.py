@@ -6,15 +6,14 @@ Data Access Layer (CRUD) for the MapReduce platform.
 This module hides raw SQLAlchemy queries from the rest of the application.
 """
 
-# ==========================================
-# JOB OPERATIONS
-# ==========================================
+#jobs
 
 def create_job(db: Session, user_id: str, input_code_ref: str, mapper_code_ref: str, reducer_code_ref: str) -> Job:
     """
     Called by the UI service (POST /jobs) or Manager service when a new job is submitted.
     Creates a new Job record in the database with status SUBMITTED.
     """
+
     new_job = Job(
         user_id=user_id,
         status=JobStatus.SUBMITTED,
@@ -50,6 +49,7 @@ def update_job_status(db: Session, job_id: str, new_status: JobStatus) -> Job:
     Called by the Manager service when a job transitions between states 
     (e.g., from SUBMITTED to RUNNING, or RUNNING to COMPLETED).
     """
+
     job = get_job(db, job_id)
     if job:
         job.status = new_status
@@ -57,14 +57,13 @@ def update_job_status(db: Session, job_id: str, new_status: JobStatus) -> Job:
         db.refresh(job)
     return job
 
-# ==========================================
-# TASK OPERATIONS
-# ==========================================
+#tasks
 
 def create_task(db: Session, job_id: str, task_type: TaskType, input_partition_ref: str) -> Task:
     """
     Called by the Manager service during Job Execution to create Mapper or Reducer tasks.
     """
+
     new_task = Task(
         job_id=job_id,
         task_type=task_type,
@@ -81,6 +80,7 @@ def get_tasks_for_job(db: Session, job_id: str, task_type: TaskType = None):
     Called by the Manager service to monitor the progress of a job.
     Optionally filter by task_type (e.g., all MAP tasks).
     """
+
     query = db.query(Task).filter(Task.job_id == job_id)
     if task_type:
         query = query.filter(Task.task_type == task_type)
@@ -92,6 +92,7 @@ def update_task_status(db: Session, task_id: str, new_status: TaskStatus, worker
     (POST /manager/tasks/status) or when a pod fails (to mark it as FAILED/RETRYING).
     Updates status, and optionally saves the worker ID (if RUNNING) or the output reference (if COMPLETED).
     """
+
     task = db.query(Task).filter(Task.task_id == task_id).first()
     if task:
         task.status = new_status
