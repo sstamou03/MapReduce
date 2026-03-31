@@ -105,3 +105,5 @@ def get_data_from_ref(ref: str) -> bytes:
         raise ValueError(f"Invalid storage reference format: {ref}. Expected 'bucket_name/object_name'.")
     bucket_name, object_name = parts
     return get_data_bytes(bucket_name, object_name)
+
+    

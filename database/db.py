@@ -16,6 +16,9 @@ state using Python classes instead of raw SQL queries.
 It provides a `get_db()` dependency generator to safely yield 
 database sessions for the microservice endpoints.
 
+It also configures the MinIO object storage connection and
+provides a `get_minio()` dependency generator for the endpoints.
+
 
 """
 
@@ -82,10 +85,7 @@ def get_db():
         db.close()
 
 def get_minio():
-    """
-    Dependency generator to safely yield the MinIO client.
-    Useful for microservices to interact with Object Storage.
-    """
+    
     yield minio_client
 
 

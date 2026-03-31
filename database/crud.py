@@ -86,9 +86,10 @@ def update_job_output_ref(db: Session, job_id: str, output_code_ref: str) -> Job
         db.refresh(job)
     return job
 
-# NOTE: The POST /admin/nodes endpoint is NOT handled here.
+# NOTE: 
+# The POST /admin/nodes endpoint is NOT handled here.
 # Node configuration should be managed by the Manager service (e.g., in-memory or via Kubernetes ConfigMaps),
-# not through the database.
+# not through using the db.We dont have any table for this.
 
 #tasks
 
