@@ -106,4 +106,52 @@ def get_data_from_ref(ref: str) -> bytes:
     bucket_name, object_name = parts
     return get_data_bytes(bucket_name, object_name)
 
-    
+
+#input partitioning
+
+def split_and_upload_input(job_id: str, input_ref: str, num_mappers: int) -> list:
+    """
+    Splits a large input file into smaller chunks (one per mapper) and uploads
+    each chunk to MinIO as a separate object.
+
+    This is the core function that enables parallel MapReduce processing.
+    The Manager service calls this before creating mapper tasks.
+
+    Args:
+        job_id: The UUID of the job.
+        input_ref: MinIO reference to the full input file (e.g., "mapreduce-inputs/job-xyz/input_data").
+        num_mappers: How many mappers (chunks) to split the input into.
+
+    Returns:
+        A list of MinIO references, one per chunk. Example:
+        ["mapreduce-inputs/job-xyz/partition_0",
+         "mapreduce-inputs/job-xyz/partition_1",
+         "mapreduce-inputs/job-xyz/partition_2"]
+    """
+    # Step 1: Download the full input file from MinIO
+    raw_data = get_data_from_ref(input_ref)
+    all_lines = raw_data.decode("utf-8").splitlines(keepends=True)
+
+    # Step 2: Calculate how many lines each mapper gets
+    total_lines = len(all_lines)
+    lines_per_chunk = total_lines // num_mappers
+    remainder = total_lines % num_mappers
+
+    # Step 3: Split into chunks and upload each one
+    bucket_name = "mapreduce-inputs"
+    partition_refs = []
+    start = 0
+
+    for i in range(num_mappers):
+        # Distribute remainder lines across the first chunks (1 extra line each)
+        chunk_size = lines_per_chunk + (1 if i < remainder else 0)
+        chunk_lines = all_lines[start:start + chunk_size]
+        start += chunk_size
+
+        # Convert chunk back to bytes and upload to MinIO
+        chunk_data = "".join(chunk_lines).encode("utf-8")
+        object_name = f"job-{job_id}/partition_{i}"
+        ref = upload_data_bytes(bucket_name, object_name, chunk_data)
+        partition_refs.append(ref)
+
+    return partition_refs
