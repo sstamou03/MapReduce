@@ -1,6 +1,23 @@
 version: '3.8'
 
 services:
+  ui-service:
+    build:
+      context: .                   # Look at the root folder
+      dockerfile: ui-service/Dockerfile # Use the Dockerfile inside ui-service
+    container_name: mapreduce-ui
+    ports:
+      - "8000:8000"
+    environment:
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=12345678
+      - DATABASE_URL=postgresql://mapreduce_user:mapreduce_password@postgres:5432/mapreduce_db
+    depends_on:
+      - postgres
+      - minio
+
+
   postgres:
     image: postgres:15-alpine
     container_name: mapreduce-postgres
@@ -11,7 +28,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
       - pgdata:/var/lib/postgresql/data
 
   minio:

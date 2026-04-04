@@ -1,0 +1,18 @@
+# our server's web stack
+fastapi==0.111.0
+uvicorn==0.30.1
+
+# file upload handling
+python-multipart==0.0.9
+
+# to verify keycloak's JWTs
+python-jose[cryptography]==3.3.0
+
+# interservice communication
+httpx==0.27.0
+
+# we need these to use the code in /database
+SQLAlchemy==2.0.29
+psycopg2-binary==2.9.9
+minio==7.2.5
+pydantic==2.7.1
