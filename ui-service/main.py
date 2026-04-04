@@ -1,8 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from sqlalchemy.orm import Session
 from typing import List
 import uuid
 
-from database import schemas
+from database import schemas, crud
+from database.db import get_db
 
 app = FastAPI()
 
@@ -54,14 +56,14 @@ async def submit_job(
     }
 
 @app.get("/jobs", response_model=List[schemas.JobResponse])
-async def get_jobs(user_id: str = Depends(get_current_user_id)):
+async def get_user_jobs(user_id: str = Depends(get_current_user_id)):
     '''
     list all jobs for the authenticated user
     '''
     return [] # dummy empty list for now
 
 @app.get("/jobs/{job_id}", response_model=schemas.JobDetailResponse)
-async def get_job_status(job_id: uuid.UUID):
+async def get_job(job_id: uuid.UUID):
     '''
     check the status of a specific job
     '''
@@ -87,6 +89,14 @@ async def abort_job(job_id: uuid.UUID):
     return {"message": f"Job {job_id} deletion requested"}
 
 # --- ADMIN ENDPOINTS ---
+
+@app.get("/admin/jobs", response_model=List[schemas.JobResponse])
+async def get_all_jobs_admin(db: Session = Depends(get_db)):
+    '''
+    admin ONLY: list all jobs in the system
+    '''
+    # add logic here that we verify the user is admin via jwt
+    return crud.get_all_jobs(db)
 
 @app.post("/admin/nodes")
 async def configure_nodes(config: dict):
