@@ -17,6 +17,25 @@ services:
       - postgres
       - minio
 
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.0
+    container_name: mapreduce-keycloak
+    command: start-dev # 'start-dev' is perfect for our project; it skips complex SSL setup
+    environment:
+      # initial admin credentials
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      # database configuration
+      - KC_DB=postgres
+      - KC_DB_URL=jdbc:postgresql://postgres:5432/keycloak_db
+      - KC_DB_USERNAME=mapreduce_user #username and password here should match the ones defined in postgres
+      - KC_DB_PASSWORD=mapreduce_password
+      - KC_HOSTNAME_STRICT=false # allows access via localhost
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
 
   postgres:
     image: postgres:15-alpine
@@ -24,7 +43,9 @@ services:
     environment:
       POSTGRES_USER: mapreduce_user
       POSTGRES_PASSWORD: mapreduce_password
-      POSTGRES_DB: mapreduce_db
+      POSTGRES_DB: mapreduce_db # the app's DB
+      POSTGRES_MULTIPLE_DATABASES: keycloak_db #keycloak's DB
+
     ports:
       - "5432:5432"
     volumes:

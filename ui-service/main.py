@@ -1,4 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi.security import OAuth2PasswordBearer
+from jose import jwt
 from sqlalchemy.orm import Session
 from typing import List
 import uuid
@@ -8,14 +10,49 @@ from database.db import get_db
 
 app = FastAPI()
 
-# --- AUTHENTICATION PLACEHOLDER ---
+# now this tells fastAPI where to search for a token
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="http://localhost:8080/realms/MapReduce-Realm/protocol/openid-connect/token"
+)
 
-''' in the following weeks, we'll replace this with a functionality that validates
-the keycloak JWT and extracts the user_id '''
+keycloak_public_key = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4oY/Hum1Q5g36Q793jEacycTUMEGM/ZlTOOi4L+d8KLAPbu7qIwjzTNLfvnT9ZE4tYNEbgYtMhKeyP/YO66qs/WlwfdzsmvwceLuGdByLmndkwsGC3SooXwWQIfEuYPG+naUqvbM/djf938h/6WkYGtOYK0k4PsjtjMzou0jow+yEFgP7PPWI8DJUbpdsYaGZgHljBV3HOdL6YqoeVqjosw8Iylf9F11kSAQ6GARiJn7xa0CAZQh3QkzK3gf0iIuahp9P5GJySbQ/RY02sS5iaPDxcpAvjLrm1A8d0AuH2CrGPwUASLK+HNFwI6jOyf+h0EVoDKvLjAc8oGGbFgNFwIDAQAB
+-----END PUBLIC KEY-----"""
 
-async def get_current_user_id():
-    # this will later use jose to validate jwt and extract user id
-    return "user-12345-demo"
+# --- Auth & RBAC ---
+
+#this is to extract both the username and role in a dictionary
+async def get_current_user_id(token: str = Depends(oauth2_scheme)):
+    """
+    decode the JWT and extracts the user's unique ID.
+    """
+    try:
+        payload = jwt.decode(
+            token, 
+            keycloak_public_key, 
+            algorithms=["RS256"],
+            options={"verify_aud": False}
+        )
+        
+        user_id: str = payload.get("sub")
+        resource_access = payload.get("resource_access", {})
+        ui_service_access = resource_access.get("ui-service", {})
+        roles = ui_service_access.get("roles", [])
+
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+            
+        return {"user_id": user_id, "roles": roles}
+    
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.JWTError as e:
+        # This catches invalid signatures or tampered tokens
+        raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
+
+# this is to extract only the user id
+async def get_verified_user_id(user_data: dict = Depends(get_current_user_id)) -> str:
+    return user_data["user_id"]
 
 # --- ENDPOINTS ---
 
@@ -38,7 +75,7 @@ async def upload_files(
 @app.post("/jobs", response_model=schemas.JobResponse)
 async def submit_job(
     job_in: schemas.JobCreate, 
-    user_id: str = Depends(get_current_user_id)
+    user_id: str = Depends(get_verified_user_id)
 ):
     '''
     2) submit MapReduce job -> forward request to manager service
@@ -56,11 +93,16 @@ async def submit_job(
     }
 
 @app.get("/jobs", response_model=List[schemas.JobResponse])
-async def get_user_jobs(user_id: str = Depends(get_current_user_id)):
+async def get_user_jobs(user_id: str = Depends(get_verified_user_id), db: Session = Depends(get_db)):
     '''
     list all jobs for the authenticated user
     '''
-    return [] # dummy empty list for now
+    # get_current_user_id() --> dictionary with username and role.
+    # get_verified_user_id() --> keeps only the user id
+    # so this function now calls get_verified_user_id() to get the user id
+
+    print(f"Debugging -- Requested all jobs for userID: {user_id}")
+    return crud.get_jobs_for_user(db, user_id)
 
 @app.get("/jobs/{job_id}", response_model=schemas.JobDetailResponse)
 async def get_job(job_id: uuid.UUID):

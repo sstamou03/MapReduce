@@ -5,9 +5,11 @@ It defines the custom ENUM types and creates the 'jobs' and 'tasks' tables,
 which act as the single source of truth for the cluster's state.
 */
 
+CREATE DATABASE keycloak_db;
 CREATE TYPE job_status AS ENUM ('SUBMITTED', 'RUNNING', 'COMPLETED', 'FAILED');
 CREATE TYPE task_status AS ENUM ('PENDING', 'RUNNING', 'RETRYING', 'COMPLETED', 'FAILED');
 CREATE TYPE task_type AS ENUM ('MAP', 'REDUCE');
+
 
 CREATE TABLE IF NOT EXISTS jobs (
     job_id UUID PRIMARY KEY,
