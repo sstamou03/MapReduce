@@ -1,10 +1,3 @@
-"""
-Unit tests for the Worker Service.
-Tests the dynamic code loading, MAP/REDUCE execution, and status reporting.
-
-Run with: python worker-service/tests.py -v
-"""
-
 import unittest
 import os
 import sys
@@ -19,6 +12,14 @@ sys.modules['psycopg2'] = MagicMock()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from worker import load_user_module, report_status
+
+
+"""
+Unit tests for the Worker Service.
+Tests the dynamic code loading, MAP/REDUCE execution, and status reporting.
+
+Run with: python worker-service/tests.py -v
+"""
 
 
 # =============================================
