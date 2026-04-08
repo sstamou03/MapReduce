@@ -50,22 +50,6 @@ def upload_data_bytes(bucket_name: str, object_name: str, data: bytes) -> str:
     minio_client.put_object(bucket_name, object_name, data_stream, length=len(data))
     return f"{bucket_name}/{object_name}"
 
-def upload_input_data(job_id: str, file_path: str) -> str:
-    """
-    Uploads the input dataset for a specific job.
-    """
-    bucket_name = "mapreduce-inputs"
-    object_name = f"job-{job_id}/input_data"
-    return upload_file(bucket_name, object_name, file_path)
-
-def upload_code(job_id: str, role: str, file_path: str) -> str:
-    """
-    Uploads user code (mapper or reducer).
-    role: e.g. 'mapper' or 'reducer'
-    """
-    bucket_name = "mapreduce-code"
-    object_name = f"job-{job_id}/{role}.py"
-    return upload_file(bucket_name, object_name, file_path)
 
 def upload_intermediate_result(job_id: str, task_id: str, data: bytes) -> str:
     """

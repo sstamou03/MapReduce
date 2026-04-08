@@ -87,5 +87,3 @@ def get_db():
 def get_minio():
     
     yield minio_client
-
-
