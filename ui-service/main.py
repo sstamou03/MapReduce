@@ -90,12 +90,11 @@ async def get_admin_user(user_data: dict = Depends(get_current_user_id)) -> str:
         
     return user_data["user_id"]
 
-async def is_admin(user_id: str) -> bool:
+async def is_admin(user_data: dict) -> bool:
     """
     Check if the user is an admin.
     """
-    user_data = get_current_user_id(user_id)
-    return "admin" in user_data["roles"]
+    return True if "admin" in user_data["roles"] else False
 
 
 """====================================================== 
@@ -205,25 +204,26 @@ async def get_job(
 @app.delete("/jobs/{job_id}", tags=["Jobs"])
 async def abort_job(
     job_id : uuid.UUID,
-    user_id : str = Depends(get_verified_user_id),
+    user_data : dict = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
     '''
     abort a job execution
     '''
+    current_user_id = user_data["user_id"]
+    isAdmin = True if is_admin(user_data) else False
+
     job = crud.get_job(db, job_id=job_id)
     if not job:
-        logger.warning(f"User {user_id} tried to delete job {job_id} that does not exist.")
+        logger.info(f"User {current_user_id} tried to delete job {job_id} that does not exist.")
         raise HTTPException(status_code=404, detail="Job not found")
 
     if job.status in ["SUBMITTED", "RUNNING"]:
         ## fill this with the request to manager service to nuke the job (pun intended)
         pass
     
-    is_admin = True if is_admin(user_id) else False
-
-    if job.user_id != user_id and not is_admin:
-        logger.warning(f"User {user_id} tried to delete job {job_id} that is not theirs.")
+    if job.user_id != current_user_id and not isAdmin:
+        logger.warning(f"User {current_user_id} tried to delete job {job_id} that is not theirs.")
         raise HTTPException(status_code=403, detail="This job is not yours to delete!")
     
     # --- REMEMBER TO FILL THIS PAAAAAAAART ------
@@ -233,15 +233,14 @@ async def abort_job(
     # then we can delete it from the database
     
     deleted = crud.delete_job(db, job_id=job_id)
-
-    if is_admin(user_id):
-        logger.info(f"Admin user {user_id} requested to delete job {job_id}.")
+    if deleted:
+        if isAdmin:
+            logger.info(f"Admin user {current_user_id} requested to delete job {job_id}.")
+        else:
+            logger.info(f"User {current_user_id} requested to delete job {job_id}.")
     else:
-        logger.info(f"User {user_id} requested to delete job {job_id}.")
-    
-    if not deleted:
+        logger.info(f"User {current_user_id} tried to delete job {job_id} and encountered an error on the system's part.")
         raise HTTPException(status_code=404, detail="Could not delete job for some reason.")
-    return {"message": f"Job {job_id} deletion requested"}
 
 """====================================================== 
                         ADMIN ENDPOINTS
