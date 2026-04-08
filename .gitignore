@@ -1,0 +1,26 @@
+# python bytecode, venvs, env vars, IDE files, OS files, tokens, temp files
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+ENV/
+env/
+
+.env
+.env.local
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+.DS_Store
+Thumbs.db
+
+*.tmp
+*.log
+*.cache
+
+.frappe_token
