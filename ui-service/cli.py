@@ -155,7 +155,7 @@ def get_jobs():
             #format time to be more readable
             created_at = job['created_at']
             formatted_time = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M:%S")
-            print(f"Job ID: {job['job_id']}\tStatus: {job['status']}\tCreated At: {formatted_time}")
+            print(f"\n\nJob ID: {job['job_id']}\nStatus: {job['status']}\nCreated At: {formatted_time}")
         
         return response.json() # this will return the refs for the uploaded files
 
@@ -164,6 +164,51 @@ def get_jobs():
             print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
         else:
             print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
+        return None
+
+def get_job(job_id:str):
+    headers = get_headers()
+    try:
+        print(f"\033[1;32mAttempting to retrieve job {job_id} from the database...\033[0m")
+        response = requests.get(f"{API_BASE_URL}/jobs/{job_id}", headers=headers)
+
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully retrieved job {job_id}\033[0m")
+        
+        job = response.json()
+        print("\n")
+        user_id = job['user_id']
+        job_id = job['job_id']
+        status = job['status']
+        input_code_ref = job['input_code_ref']
+        mapper_code_ref = job['mapper_code_ref']
+        reducer_code_ref = job['reducer_code_ref']
+        output_code_ref = job['output_code_ref']
+        created_at = job['created_at']
+        updated_at = job['updated_at']
+        formatted_time = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"User ID: {user_id}")
+        print(f"Job ID: {job_id}")
+        print(f"Status: {status}")
+        print(f"Input Code Ref: {input_code_ref}")
+        print(f"Mapper Code Ref: {mapper_code_ref}")
+        print(f"Reducer Code Ref: {reducer_code_ref}")
+        print(f"Output Code Ref: {output_code_ref}")
+        print(f"Created At: {formatted_time}")
+        print(f"Updated At: {updated_at}")
+        return job # this will return the job details
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 403:
+            print("\033[91m[Error 403 - Forbidden]. This job does not belong to you.\033[0m")
+        elif response.status_code == 422:
+            print("\033[91m[Error 422 - Unprocessable Entity]. Did you provide the correct job ID?\033[0m")
+        else:
+            print(f"\033[91mFailed to fetch job: {e}\033[0m")
         return None
 
 # -- submit job : POST /jobs
@@ -207,7 +252,7 @@ def get_all_jobs():
             #format time to be more readable
             created_at = job['created_at']
             formatted_time = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M:%S")
-            print(f"User: {job['user_id']}\tJob ID: {job['job_id']}\tStatus: {job['status']}\tCreated At: {formatted_time}")
+            print(f"\n\nUser: {job['user_id']}\nJob ID: {job['job_id']}\nStatus: {job['status']}\nCreated At: {formatted_time}")
         
         return response.json() # this will return the refs for the uploaded files
 
@@ -240,6 +285,10 @@ if __name__ == "__main__":
 
     # -- get user jobs --
     subparsers.add_parser("jobs", help="Get all jobs for the authenticated user")
+
+    # -- get specific job 
+    spec_parser = subparsers.add_parser("job", help="Get a specific job")
+    spec_parser.add_argument("--job_id", required=True, help="ID of the job to retrieve")
 
     # -- submit job --
     submit_parser = subparsers.add_parser("submit", help="Submit a new job")
@@ -277,6 +326,10 @@ if __name__ == "__main__":
     
     if args.command == "jobs":
         get_jobs()
+        sys.exit(0)
+    
+    if args.command == "job":
+        get_job(args.job_id)
         sys.exit(0)
     
     if args.command == "all-jobs":

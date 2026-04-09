@@ -225,15 +225,20 @@ async def get_user_jobs(user_id: str = Depends(get_verified_user_id), db: Sessio
 @app.get("/jobs/{job_id}", response_model=schemas.JobDetailResponse, tags=["Jobs"])
 async def get_job(
     job_id : uuid.UUID,
-    user_id : str = Depends(get_verified_user_id),
+    user_data : dict = Depends(get_current_user_id),
     db: Session = Depends(get_db)
 ):
-    logger.info(f"User {user_id} requested details for job {job_id}.")
+
+    logger.info(f"User {user_data.get('user_id')} requested details for job {job_id}.")
+
+    user_id = user_data.get('user_id')
     job = crud.get_job(db, job_id=job_id)
+
     if not job:
         logger.warning(f"User {user_id} tried to access job {job_id} that does not exist.")
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.user_id != user_id:
+
+    if job.user_id != user_id and not is_admin(user_data):
         logger.warning(f"User {user_id} tried to access job {job_id} that is not theirs.")
         raise HTTPException(status_code=403, detail="This job is not yours!")
     return job    
