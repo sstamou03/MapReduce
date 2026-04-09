@@ -96,8 +96,7 @@ async def get_current_user_id(token: str = Depends(oauth2_scheme)):
             KEYCLOAK_PUBLIC_KEY, #used to verify token that was signed with Keycloak's private key
             algorithms=["RS256"],
             options={"verify_aud": False}
-        )
-        
+        )        
         user_id: str = payload.get("sub")
         resource_access = payload.get("resource_access", {})
         ui_service_access = resource_access.get("ui-service", {})

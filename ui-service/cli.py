@@ -108,7 +108,7 @@ def get_headers():
         "Authorization": f"Bearer {token}" #this is what will be used to authenticate requests to the ui-service
     } 
 
-""" =================== REACH THE ENDPOINTS VIA CLI ======================= """
+""" =================== USER ENDPOINTS VIA CLI ======================= """
 
 # -- file upload : POST /files/upload
 def upload_minio(input_path:str, mapper_path:str, reducer_path:str):
@@ -191,6 +191,34 @@ def submit_job(input_ref:str, mapper_ref:str, reducer_ref:str):
             print(f"\033[91mFailed to submit job: {e}\033[0m")
         return None
         
+""" =================== ADMIN ENDPOINTS VIA CLI ======================= """
+def get_all_jobs():
+    headers = get_headers()
+    try:
+        print(f"\033[1;32mAttempting to retrieve all jobs from the database...\033[0m")
+        response = requests.get(f"{API_BASE_URL}/admin/jobs", headers=headers)
+
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully retrieved all jobs\033[0m")
+        
+        # we will print only the job IDs, status and created at
+        for job in response.json():
+            #format time to be more readable
+            created_at = job['created_at']
+            formatted_time = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"User: {job['user_id']}\tJob ID: {job['job_id']}\tStatus: {job['status']}\tCreated At: {formatted_time}")
+        
+        return response.json() # this will return the refs for the uploaded files
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 403:
+            print("\033[91m[Error 403 - Forbidden]. You're not an admin, don't try access admin endpoints.\033[0m")
+        else:
+            print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
+        return None
     
 
 if __name__ == "__main__":
@@ -200,6 +228,7 @@ if __name__ == "__main__":
     # dest="command" means that the value of the keyword will be stored in the 'args.command' variable
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
+    ''' ============ USER & ADMIN ENDPOINTS ============'''
     # -- login --
     subparsers.add_parser("login", help="Authenticate with Keycloak")
 
@@ -218,6 +247,9 @@ if __name__ == "__main__":
     submit_parser.add_argument("--mapper_ref", required=True, help="Reference to the mapper code")
     submit_parser.add_argument("--reducer_ref", required=True, help="Reference to the reducer code")
     
+    ''' ============ ADMIN ENDPOINTS ============'''
+    # -- get all jobs --
+    subparsers.add_parser("all-jobs", help="Get all jobs for the authenticated user")
 
     args = parser.parse_args()
 
@@ -245,4 +277,8 @@ if __name__ == "__main__":
     
     if args.command == "jobs":
         get_jobs()
+        sys.exit(0)
+    
+    if args.command == "all-jobs":
+        get_all_jobs()
         sys.exit(0)
