@@ -4,6 +4,7 @@ import requests
 import getpass
 import json
 import argparse #this will be used to parse the CLI arguments
+import datetime
 from typing import Optional
 
 API_BASE_URL = "http://localhost:8000"
@@ -148,7 +149,14 @@ def get_jobs():
         response.raise_for_status()
         
         print(f"\033[1;32mSuccessfully retrieved jobs\033[0m")
-        print(response.json())
+        
+        # we will print only the job IDs, status and created at
+        for job in response.json():
+            #format time to be more readable
+            created_at = job['created_at']
+            formatted_time = datetime.datetime.fromisoformat(created_at).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"Job ID: {job['job_id']}\tStatus: {job['status']}\tCreated At: {formatted_time}")
+        
         return response.json() # this will return the refs for the uploaded files
 
     except requests.exceptions.RequestException as e:
@@ -157,6 +165,32 @@ def get_jobs():
         else:
             print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
         return None
+
+# -- submit job : POST /jobs
+def submit_job(input_ref:str, mapper_ref:str, reducer_ref:str):
+    headers = get_headers()
+    payload = {
+        "input_code_ref": input_ref,
+        "mapper_code_ref": mapper_ref,
+        "reducer_code_ref": reducer_ref,
+    }
+    try:
+        print(f"\033[1;32mAttempting to submit job to the database...\033[0m")
+        response = requests.post(f"{API_BASE_URL}/jobs", headers=headers, json=payload)
+
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully submitted job\033[0m")
+        print(response.json())
+        return response.json() # this will return the job details
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        else:
+            print(f"\033[91mFailed to submit job: {e}\033[0m")
+        return None
+        
     
 
 if __name__ == "__main__":
@@ -178,6 +212,13 @@ if __name__ == "__main__":
     # -- get user jobs --
     subparsers.add_parser("jobs", help="Get all jobs for the authenticated user")
 
+    # -- submit job --
+    submit_parser = subparsers.add_parser("submit", help="Submit a new job")
+    submit_parser.add_argument("--input_ref", required=True, help="Reference to the input data")
+    submit_parser.add_argument("--mapper_ref", required=True, help="Reference to the mapper code")
+    submit_parser.add_argument("--reducer_ref", required=True, help="Reference to the reducer code")
+    
+
     args = parser.parse_args()
 
     # --- execution logic ---
@@ -196,6 +237,11 @@ if __name__ == "__main__":
     if args.command == "upload":
         # we don't print the banner for every command, keep it clean
         upload_minio(args.input, args.mapper, args.reducer)
+        sys.exit(0)
+    
+    if args.command == "submit":
+        submit_job(args.input_ref, args.mapper_ref, args.reducer_ref)
+        sys.exit(0)
     
     if args.command == "jobs":
         get_jobs()

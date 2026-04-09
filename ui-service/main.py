@@ -16,6 +16,7 @@ from database.db import get_db
 # we configure logging to see it in terminal
 import logging
 import colorlog
+import time
 
 handler = colorlog.StreamHandler()
 handler.setFormatter(colorlog.ColoredFormatter(
