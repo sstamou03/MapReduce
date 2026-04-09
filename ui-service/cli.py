@@ -107,10 +107,10 @@ def get_headers():
         "Authorization": f"Bearer {token}" #this is what will be used to authenticate requests to the ui-service
     } 
 
-""" =================== PARSE ARGUMENTS IN CLI FOR ENDPOINTS ======================= """
+""" =================== REACH THE ENDPOINTS VIA CLI ======================= """
 
+# -- file upload : POST /files/upload
 def upload_minio(input_path:str, mapper_path:str, reducer_path:str):
-    """ Upload the 3 required files to minio """
     headers = get_headers()
 
     files = {
@@ -125,7 +125,10 @@ def upload_minio(input_path:str, mapper_path:str, reducer_path:str):
 
         response.raise_for_status()
         
-        print(f"\033[1;32mSuccessfully uploaded files to MinIO\033[0m")
+        print(f"\033[1;32mSuccessfully uploaded files to MinIO!\nYour files are stored in MinIO under the following references:\033[0m")
+        print(f"Input reference: {response.json().get('input_ref')}")
+        print(f"Mapper reference: {response.json().get('mapper_ref')}")
+        print(f"Reducer reference: {response.json().get('reducer_ref')}")
         return response.json() # this will return the refs for the uploaded files
 
     except requests.exceptions.RequestException as e:
@@ -135,11 +138,32 @@ def upload_minio(input_path:str, mapper_path:str, reducer_path:str):
             print(f"\033[91mUpload Failed: {e}\033[0m")
         return None
     
+# -- get user jobs : GET /jobs
+def get_jobs():
+    headers = get_headers()
+    try:
+        print(f"\033[1;32mAttempting to retrieve your jobs from the database...\033[0m")
+        response = requests.get(f"{API_BASE_URL}/jobs", headers=headers)
 
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully retrieved jobs\033[0m")
+        print(response.json())
+        return response.json() # this will return the refs for the uploaded files
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        else:
+            print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
+        return None
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Frappe MapReduce CLI")
-    # We create "sub-commands"
+
+    # this tells argparse to expect a specific keyword after 'python3 cli.py' (e.g. 'login' or 'upload')
+    # dest="command" means that the value of the keyword will be stored in the 'args.command' variable
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # -- login --
@@ -150,6 +174,9 @@ if __name__ == "__main__":
     up_parser.add_argument("--input", required=True, help="Path to data file")
     up_parser.add_argument("--mapper", required=True, help="Path to mapper script")
     up_parser.add_argument("--reducer", required=True, help="Path to reducer script")
+
+    # -- get user jobs --
+    subparsers.add_parser("jobs", help="Get all jobs for the authenticated user")
 
     args = parser.parse_args()
 
@@ -165,7 +192,11 @@ if __name__ == "__main__":
         login_keycloak()
         sys.exit(0)
     
-    # if the user tries to upload without being logged in, we should prompt them to log in
+    # if the user tries to upload without being logged in, they will get a 401 error - unauthorized
     if args.command == "upload":
         # we don't print the banner for every command, keep it clean
         upload_minio(args.input, args.mapper, args.reducer)
+    
+    if args.command == "jobs":
+        get_jobs()
+        sys.exit(0)

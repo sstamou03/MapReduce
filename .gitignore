@@ -24,3 +24,4 @@ Thumbs.db
 *.cache
 
 .frappe_token
+.frappe_tokens

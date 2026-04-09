@@ -4,6 +4,11 @@ from jose import jwt
 from sqlalchemy.orm import Session
 from typing import List
 import uuid
+import sys
+import asyncio
+
+import httpx
+from contextlib import asynccontextmanager
 
 from database import schemas, crud, storage
 from database.db import get_db
@@ -29,18 +34,51 @@ logger = colorlog.getLogger()
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
-app = FastAPI()
+#we store here all the keys from keycloak, to prevent a token expiring at the moment keycloak rotates keys
+KEYCLOAK_PUBLIC_KEY : str = ""
+
+# we will grab the public key from keycloak at startup, not hardcode it like before
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- STARTUP: Fetch Key from Keycloak ---
+    global KEYCLOAK_PUBLIC_KEY
+    realm_url = "http://mapreduce-keycloak:8080/realms/MapReduce-Realm"
+    
+    max_retries = 10
+    retry_delay = 4  # seconds
+    
+    async with httpx.AsyncClient() as client:
+        for i in range(max_retries):
+            try:
+                logger.info(f"Attempting to fetch Keycloak public key (Attempt {i+1}/{max_retries})...")
+                response = await client.get(realm_url, timeout=10.0)
+                response.raise_for_status()
+                data = response.json()
+                
+                raw_key = data.get("public_key")
+                KEYCLOAK_PUBLIC_KEY = (
+                    f"-----BEGIN PUBLIC KEY-----\n"
+                    f"{raw_key}\n"
+                    f"-----END PUBLIC KEY-----"
+                )
+                logger.info("Successfully fetched Keycloak public key dynamically.")
+                break  # Success! Exit the loop
+                
+            except Exception as e:
+                if i < max_retries - 1:
+                    logger.warning(f"Keycloak not ready yet ({e}). Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                else:
+                    logger.critical(f"Failed to fetch Keycloak key after {max_retries} attempts: {e}")
+                    sys.exit(1)
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 # now this tells fastAPI where to search for a token
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="http://localhost:8080/realms/MapReduce-Realm/protocol/openid-connect/token"
 )
-
-#this is keycloak's public key, which will be used to verify the token
-keycloak_public_key = """-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4oY/Hum1Q5g36Q793jEacycTUMEGM/ZlTOOi4L+d8KLAPbu7qIwjzTNLfvnT9ZE4tYNEbgYtMhKeyP/YO66qs/WlwfdzsmvwceLuGdByLmndkwsGC3SooXwWQIfEuYPG+naUqvbM/djf938h/6WkYGtOYK0k4PsjtjMzou0jow+yEFgP7PPWI8DJUbpdsYaGZgHljBV3HOdL6YqoeVqjosw8Iylf9F11kSAQ6GARiJn7xa0CAZQh3QkzK3gf0iIuahp9P5GJySbQ/RY02sS5iaPDxcpAvjLrm1A8d0AuH2CrGPwUASLK+HNFwI6jOyf+h0EVoDKvLjAc8oGGbFgNFwIDAQAB
------END PUBLIC KEY-----"""
-
 
 """====================================================== 
                         AUTH & RBAC
@@ -54,7 +92,7 @@ async def get_current_user_id(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(
             token, 
-            keycloak_public_key, #used to verify token that was signed with Keycloak's private key
+            KEYCLOAK_PUBLIC_KEY, #used to verify token that was signed with Keycloak's private key
             algorithms=["RS256"],
             options={"verify_aud": False}
         )
@@ -90,7 +128,7 @@ async def get_admin_user(user_data: dict = Depends(get_current_user_id)) -> str:
         
     return user_data["user_id"]
 
-async def is_admin(user_data: dict) -> bool:
+def is_admin(user_data: dict) -> bool:
     """
     Check if the user is an admin.
     """
@@ -271,9 +309,10 @@ async def configure_nodes(config: dict):
     '''
     return {"message": "Node configuration updated"}
 
-### (TODO) : Write the rest at some point huh
+### (TODO) : To be filled later on in the project
 @app.delete("/admin/users/{user_id}", tags=["Admin"])
 async def delete_user_data( 
+    user_id: str,
     admin_id: str = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
@@ -291,12 +330,4 @@ async def delete_user_data(
     When the admin calls it, it purges the system (postgresql & minio) from the specific user, so that then they
     can be deleted from keycloak as well.
     '''
-    if admin_id == user_id:
-        raise HTTPException(status_code=403, detail="You cannot delete your own account!")
-
-    if not is_admin(user_id):
-        raise HTTPException(status_code=403, detail="You are not an admin!")
-
-    
-
     return {"message": f"User {user_id} deletion requested"}
