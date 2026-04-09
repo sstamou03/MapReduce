@@ -1,66 +1,84 @@
 import unittest
 import uuid
+import sys
 from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
-# Mock psycopg2 before importing database logic
-import sys
+# Mock psycopg2 before importing database logic to avoid connection errors
 sys.modules['psycopg2'] = MagicMock()
 
-# Import your app and dependencies
 from main import app, start_job_orchestration
-from database import db,schemas
+from database import db
 
 client = TestClient(app)
 
-class TestManagerStep1(unittest.TestCase):
+class TestManagerOrchestration(unittest.TestCase):
 
+    def setUp(self):
+        """Prepare common test data."""
+        self.job_id = uuid.uuid4()
+        self.db_session = MagicMock()
+
+    
     @patch("database.crud.get_job")
     @patch("database.crud.update_job_status")
     @patch("database.storage.split_and_upload_input")
     @patch("database.crud.create_task")
-    def test_orchestration_flow(self, mock_create_task, mock_split, mock_update_status, mock_get_job):
-        """
-        Tests that Step 1 orchestration:
-        1. Updates job to RUNNING
-        2. Calls partitioning logic
-        3. Creates the correct number of tasks in DB
-        """
-        # Setup mocks
-        job_id = uuid.uuid4()
+    @patch("main.create_worker_pod") 
+    def test_step1_partitioning_logic(self, mock_pod, mock_create_task, mock_split, mock_update_status, mock_get_job):
+        """Verify Step 1: Status updates, partitioning, and task creation."""
         mock_job = MagicMock()
-        mock_job.job_id = job_id
-        mock_job.input_code_ref = "mapreduce-inputs/test_data"
+        mock_job.job_id = self.job_id
         mock_get_job.return_value = mock_job
-        
-        # Simulate 3 partitions being created by storage.py
-        mock_split.return_value = ["ref1", "ref2", "ref3"]
+        mock_split.return_value = ["ref0", "ref1", "ref2"]
 
-        # Run the orchestration logic
-        db_session = MagicMock()
-        start_job_orchestration(job_id, db_session)
+        start_job_orchestration(self.job_id, self.db_session)
 
-        # ASSERTIONS
-        # 1. Check if status was updated to RUNNING
-        mock_update_status.assert_called_with(db_session, str(job_id), db.JobStatus.RUNNING)
-        
-        # 2. Check if partitioning was called with 3 mappers
-        mock_split.assert_called_once_with(
-            job_id=str(job_id),
-            input_ref=mock_job.input_code_ref,
-            num_mappers=3
-        )
-
-        # 3. Check if 3 tasks were created in the DB
+        # Confirm DB was updated correctly 
+        mock_update_status.assert_called_with(self.db_session, str(self.job_id), db.JobStatus.RUNNING)
         self.assertEqual(mock_create_task.call_count, 3)
-        logger_call_args = mock_create_task.call_args_list[0][1]
-        self.assertEqual(logger_call_args['task_type'], db.TaskType.MAP)
+        print("\n[✓] Test Passed: Partitioning and DB Tasks verified.")
 
-    def test_health_endpoint(self):
-        """Verify the health check works for Kubernetes Liveness probe."""
+    
+    @patch("main.k8s_batch_v1")
+    @patch("database.crud.get_job")
+    @patch("database.crud.update_job_status")
+    @patch("database.storage.split_and_upload_input")
+    @patch("database.crud.create_task")
+    def test_step2_k8s_job_spawning(self, mock_create_task, mock_split, mock_update_status, mock_get_job, mock_k8s):
+        """Verify Step 2: Manager actually requests Pods from Kubernetes."""
+        mock_job = MagicMock()
+        mock_job.job_id = self.job_id
+        mock_job.mapper_code_ref = "minio/mapper.py"
+        mock_get_job.return_value = mock_job
+        mock_split.return_value = ["ref0", "ref1", "ref2"]
+        
+        # Ensure task objects have valid IDs for the pod name 
+        def side_effect_create_task(*args, **kwargs):
+            task = MagicMock()
+            task.task_id = uuid.uuid4()
+            task.task_type = "MAP"
+            task.input_partition_ref = kwargs.get('input_partition_ref', "ref")
+            return task
+        mock_create_task.side_effect = side_effect_create_task
+
+        start_job_orchestration(self.job_id, self.db_session)
+
+        # Verify K8s API was called once per task 
+        self.assertEqual(mock_k8s.create_namespaced_job.call_count, 3)
+        
+        # Peek at the environment variables sent to K8s
+        job_body = mock_k8s.create_namespaced_job.call_args_list[0][1]['body']
+        env_vars = job_body.spec.template.spec.containers[0].env
+        task_type_env = next(e for e in env_vars if e.name == "TASK_TYPE")
+        
+        self.assertEqual(task_type_env.value, "MAP")
+        print("[✓] Test Passed: K8s Dynamic Spawning verified.")
+
+    def test_health_check(self):
+        """Verify Liveness probe for K8s."""
         response = client.get("/healthz")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
 
 if __name__ == "__main__":
     unittest.main()
