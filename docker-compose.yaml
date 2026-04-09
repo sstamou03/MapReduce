@@ -17,6 +17,24 @@ services:
       - postgres
       - minio
 
+  manager-service:
+    build:
+      context: .
+      dockerfile: manager-service/Dockerfile
+    container_name: mapreduce-manager
+    ports:
+      - "8001:8000" # Map to 8001 so it doesn't conflict with the UI on 8000
+    environment:
+      - DATABASE_URL=postgresql://mapreduce_user:mapreduce_password@postgres:5432/mapreduce_db
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=12345678
+      # We set this so the Manager knows where the cluster is later
+      - KUBERNETES_SERVICE_HOST=
+    depends_on:
+      - postgres
+      - minio
+
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.0
     container_name: mapreduce-keycloak

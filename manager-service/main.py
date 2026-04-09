@@ -135,33 +135,35 @@ def start_job_orchestration(job_id: uuid.UUID, db_session: Session):
         logger.error(f"[X] Orchestration error for {job_str}: {str(e)}")
         crud.update_job_status(db_session, job_str, db.JobStatus.FAILED)
 
-
-@app.post("/manager/jobs", response_model=schemas.JobResponse)
-def schedule_job(
-    job_data: schemas.JobCreate, 
+@app.post("/manager/jobs")
+def trigger_job(
+    payload: dict, # Expecting {"job_id": "uuid-string"}
     background_tasks: BackgroundTasks,
-    db_session: Session = Depends(db.get_db),
-    x_user_id: str = Header(...) # Identifies the user from Keycloak 
+    db_session: Session = Depends(db.get_db)
 ):
     """
-    Receives job information from the UI service.
-    Saves metadata and triggers background partitioning.
+    Step 1 & 2 Trigger:
+    The UI creates the job entry first, then pings this endpoint to start
+    partitioning and pod spawning.
     """
-    logger.info(f"[*] UI triggered a new job for User: {x_user_id}")
+    job_id = payload.get("job_id")
+    if not job_id:
+        raise HTTPException(status_code=400, detail="Missing job_id in payload")
 
-    # Use the real user_id from the header 
-    new_job = crud.create_job(
-        db=db_session,
-        user_id=x_user_id,
-        input_code_ref=job_data.input_code_ref,
-        mapper_code_ref=job_data.mapper_code_ref,
-        reducer_code_ref=job_data.reducer_code_ref
-    )
+    logger.info(f"[*] Manager received trigger for Job ID: {job_id}")
+
+    # 1. Verify the job exists in the shared PostgreSQL DDS
+    job = crud.get_job(db_session, job_id)
+    if not job:
+        logger.error(f"[!] Job {job_id} not found in database.")
+        raise HTTPException(status_code=404, detail="Job not found in DB")
     
-    # Trigger partitioning logic in background
-    background_tasks.add_task(start_job_orchestration, new_job.job_id, db_session)
+    # 2. Hand off to the Orchestration Brain (Partitioning -> Pod Spawning)
+    # This runs in the background so the UI doesn't time out
+    background_tasks.add_task(start_job_orchestration, job.job_id, db_session)
     
-    return new_job
+    logger.info(f"[✓] Orchestration background task scheduled for Job: {job_id}")
+    return {"message": "Orchestration started", "job_id": job_id}
 
 @app.post("/manager/tasks/status", response_model=schemas.TaskResponse)
 def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = Depends(db.get_db)):
