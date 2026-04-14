@@ -1,0 +1,56 @@
+test_create_job (__main__.TestCrudJobs.test_create_job)
+Test that create_job creates a job with SUBMITTED status ... C:\Users\stamo\AppData\Local\Programs\Python\Python313\Lib\site-packages\sqlalchemy\sql\schema.py:3624: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  return util.wrap_callable(lambda ctx: fn(), fn)  # type: ignore
+ok
+test_delete_job (__main__.TestCrudJobs.test_delete_job)
+Test that delete_job removes the job and its tasks ... ok
+test_delete_job_not_found (__main__.TestCrudJobs.test_delete_job_not_found)
+Test that delete_job returns False for a non-existent job ... ok
+test_get_all_jobs (__main__.TestCrudJobs.test_get_all_jobs)
+Test that get_all_jobs returns all jobs ... ok
+test_get_job (__main__.TestCrudJobs.test_get_job)
+Test that get_job retrieves the correct job by ID ... ok
+test_get_job_not_found (__main__.TestCrudJobs.test_get_job_not_found)
+Test that get_job returns None for a non-existent job ... ok
+test_get_jobs_for_user (__main__.TestCrudJobs.test_get_jobs_for_user)
+Test that get_jobs_for_user only returns jobs for the given user ... ok
+test_update_job_output_ref (__main__.TestCrudJobs.test_update_job_output_ref)
+Test that update_job_output_ref saves the output reference ... ok
+test_update_job_status (__main__.TestCrudJobs.test_update_job_status)
+Test that update_job_status correctly changes the job status ... ok
+test_create_task (__main__.TestCrudTasks.test_create_task)
+Test that create_task creates a task with PENDING status ... ok
+test_get_tasks_filtered_by_type (__main__.TestCrudTasks.test_get_tasks_filtered_by_type)
+Test filtering tasks by MAP or REDUCE type ... ok
+test_get_tasks_for_job (__main__.TestCrudTasks.test_get_tasks_for_job)
+Test getting all tasks for a specific job ... ok
+test_update_task_status_completed (__main__.TestCrudTasks.test_update_task_status_completed)
+Test completing a task with output reference ... ok
+test_update_task_status_failed_and_retry (__main__.TestCrudTasks.test_update_task_status_failed_and_retry)
+Test the failure recovery flow: RUNNING -> FAILED -> RETRYING ... ok
+test_update_task_status_running (__main__.TestCrudTasks.test_update_task_status_running)
+Test updating a task to RUNNING with worker pod ID ... ok
+test_file_upload_response (__main__.TestSchemas.test_file_upload_response)
+Test FileUploadResponse with partial refs ... ok
+test_job_create_missing_field (__main__.TestSchemas.test_job_create_missing_field)
+Test that JobCreate rejects data with missing required fields ... ok
+test_job_create_valid (__main__.TestSchemas.test_job_create_valid)
+Test that JobCreate accepts valid data ... ok
+test_job_response_from_dict (__main__.TestSchemas.test_job_response_from_dict)
+Test that JobResponse correctly parses a dictionary ... ok
+test_task_status_update_minimal (__main__.TestSchemas.test_task_status_update_minimal)
+Test TaskStatusUpdate works with only required fields ... ok
+test_task_status_update_valid (__main__.TestSchemas.test_task_status_update_valid)
+Test that TaskStatusUpdate accepts valid worker report ... ok
+test_split_even (__main__.TestSplitLogic.test_split_even)
+Test splitting 6 lines evenly into 3 chunks of 2 lines each ... ok
+test_split_single_mapper (__main__.TestSplitLogic.test_split_single_mapper)
+Test splitting with 1 mapper - all data stays in one chunk ... ok
+test_split_uneven (__main__.TestSplitLogic.test_split_uneven)
+Test splitting 7 lines into 3 chunks (3+2+2 distribution) ... ok
+
+----------------------------------------------------------------------
+Ran 24 tests in 0.063s
+
+OK
+<sys>:0: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x000001E7530C46D0>

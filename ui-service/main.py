@@ -201,7 +201,19 @@ async def submit_job(
         
         logger.info(f"User {user_id} submitted a new job {new_job.job_id}.")
 
-        # next step here is to make the ui send a request to the manager service to start the job
+        # Forward the job to the Manager service so it can start orchestration
+        try:
+            async with httpx.AsyncClient() as client:
+                manager_response = await client.post(
+                    "http://manager-service:8000/manager/jobs",
+                    json={"job_id": str(new_job.job_id)},
+                    timeout=10.0
+                )
+                manager_response.raise_for_status()
+                logger.info(f"Manager accepted job {new_job.job_id} for orchestration.")
+        except Exception as mgr_err:
+            logger.warning(f"Manager notification failed for job {new_job.job_id}: {mgr_err}. Job is saved but not yet orchestrated.")
+
         return new_job
     
     except Exception as e:

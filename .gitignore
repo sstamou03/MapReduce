@@ -24,4 +24,5 @@ Thumbs.db
 *.cache
 
 .frappe_token
-.frappe_tokens
+.frappe_tokens*.csv
+input_data.csv
