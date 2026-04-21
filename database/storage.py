@@ -1,6 +1,7 @@
 import io
 import uuid
 import os
+import json
 from minio import Minio
 from minio.error import S3Error
 
@@ -139,3 +140,33 @@ def split_and_upload_input(job_id: str, input_ref: str, num_mappers: int) -> lis
         partition_refs.append(ref)
 
     return partition_refs
+
+# ==========================================
+# SHUFFLE & CLEANUP (Data Engineer Tasks)
+# ==========================================
+
+def shuffle_intermediate_results(job_id: str, intermediate_refs: list) -> str:
+    """
+    Downloads all intermediate JSON logs from MinIO, parses them, 
+    merges them into a single massive array, and uploads the shuffled
+    result back to MinIO for the Reducer to use.
+    """
+    all_results = []
+    for ref in intermediate_refs:
+        try:
+            raw_bytes = get_data_from_ref(ref)
+            data = json.loads(raw_bytes.decode("utf-8"))
+            if isinstance(data, list):
+                all_results.extend(data)
+            else:
+                all_results.append(data)
+        except Exception as e:
+            print(f"Error shuffling reference {ref}: {e}")
+            
+    # Upload the combined result
+    combined_bytes = json.dumps(all_results).encode("utf-8")
+    bucket_name = "mapreduce-intermediates"
+    object_name = f"job-{job_id}/shuffled_output.json"
+    
+    return upload_data_bytes(bucket_name, object_name, combined_bytes)
+
