@@ -91,6 +91,24 @@ def get_data_from_ref(ref: str) -> bytes:
     bucket_name, object_name = parts
     return get_data_bytes(bucket_name, object_name)
 
+def delete_job_files(job_id: str):
+    """
+    Deletes all files in MinIO related to a specific job.
+    Called when a job is aborted or a user is deleted.
+    """
+    prefix = f"job-{job_id}/"
+    buckets_to_clean = ["mapreduce-intermediates", "mapreduce-inputs", "mapreduce-outputs"]
+
+    for bucket in buckets_to_clean:
+        try:
+            if minio_client.bucket_exists(bucket):
+                objects_to_delete = minio_client.list_objects(bucket, prefix=prefix, recursive=True)
+                for obj in objects_to_delete:
+                    minio_client.remove_object(bucket, obj.object_name)
+        except S3Error as e:
+            print(f"[-] Error cleaning bucket {bucket} for job {job_id}: {e}")
+
+
 
 #input partitioning
 
@@ -141,10 +159,8 @@ def split_and_upload_input(job_id: str, input_ref: str, num_mappers: int) -> lis
 
     return partition_refs
 
-# ==========================================
-# SHUFFLE & CLEANUP (Data Engineer Tasks)
-# ==========================================
 
+#shuffle
 def shuffle_intermediate_results(job_id: str, intermediate_refs: list) -> str:
     """
     Downloads all intermediate JSON logs from MinIO, parses them, 
@@ -169,4 +185,6 @@ def shuffle_intermediate_results(job_id: str, intermediate_refs: list) -> str:
     object_name = f"job-{job_id}/shuffled_output.json"
     
     return upload_data_bytes(bucket_name, object_name, combined_bytes)
-
+
+
+# data deletion

@@ -140,3 +140,23 @@ def update_task_status(db: Session, task_id: str, new_status: TaskStatus, worker
         db.commit()
         db.refresh(task)
     return task
+
+def delete_user_jobs(db: Session, user_id: str) -> int:
+    """
+    Called by the Admin API to wipe out all data for a specific user.
+    Deletes all jobs (and tasks) from the DB, and removes all MinIO files.
+    Returns the number of jobs deleted.
+    """
+    from . import storage # Local import to avoid circular dependency
+    
+    jobs = get_jobs_for_user(db, user_id)
+    count = 0
+    for job in jobs:
+        # Delete from MinIO
+        storage.delete_job_files(str(job.job_id))
+        
+        # Delete from PostgreSQL
+        delete_job(db, str(job.job_id))
+        count += 1
+        
+    return count
