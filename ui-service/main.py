@@ -293,6 +293,9 @@ async def abort_job(
     # if the job is running/submitted/retrying/pending, we should send a request to the manager service to abort the job first
     # then we can delete it from the database
     
+    # first delete minIO data associated with the job
+    storage.delete_job_files(str(job_id))
+    
     deleted = crud.delete_job(db, job_id=job_id)
     if deleted:
         if isAdmin:
