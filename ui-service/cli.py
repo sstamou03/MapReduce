@@ -126,7 +126,7 @@ def upload_minio(input_path:str, mapper_path:str, reducer_path:str):
 
         response.raise_for_status()
         
-        print(f"\033[1;32mSuccessfully uploaded files to MinIO!\nYour files are stored in MinIO under the following references:\033[0m")
+        print(f"\033[1;32mSuccessfully uploaded files to MinIO!\nYour files are stored in MinIO under the following references:\033[0m \033[1;33m(please use THESE references to submit a job)\033[0m")
         print(f"Input reference: {response.json().get('input_ref')}")
         print(f"Mapper reference: {response.json().get('mapper_ref')}")
         print(f"Reducer reference: {response.json().get('reducer_ref')}")
@@ -148,9 +148,13 @@ def get_jobs():
 
         response.raise_for_status()
         
-        print(f"\033[1;32mSuccessfully retrieved jobs\033[0m")
+        print(f"\033[1;32mSuccessfully retrieved jobs :\033[0m")
         
         # we will print only the job IDs, status and created at
+        if not response.json():
+            print("\nYou don't have any active jobs.\n")
+            return None
+        
         for job in response.json():
             #format time to be more readable
             created_at = job['created_at']
@@ -166,6 +170,7 @@ def get_jobs():
             print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
         return None
 
+# -- get specific job by id : GET /jobs/{job_id}
 def get_job(job_id:str):
     headers = get_headers()
     try:
@@ -232,10 +237,36 @@ def submit_job(input_ref:str, mapper_ref:str, reducer_ref:str):
     except requests.exceptions.RequestException as e:
         if response.status_code == 401:
             print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 400:
+            error_detail = response.json().get('detail', 'Bad Request')
+            print(f"\033[91m[Error 400 - Bad Request]. {error_detail}\033[0m")
         else:
             print(f"\033[91mFailed to submit job: {e}\033[0m")
         return None
         
+# abort a job (either admin or owner user) : DELETE /jobs/{job_id}
+def delete_job(job_id : str):
+    headers = get_headers()
+    try:
+        print(f"\033[1;32mAttempting to delete job {job_id}...\033[0m")
+        response = requests.delete(f"{API_BASE_URL}/jobs/{job_id}", headers=headers)
+
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully deleted job {job_id}\033[0m")
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 403:
+            print("\033[91m[Error 403 - Forbidden]. This job is not yours to delete!\033[0m")
+        elif response.status_code == 404:
+            print("\033[91m[Error 404 - Not Found]. Job not found.\033[0m")
+        else:
+            print(f"\033[91mFailed to delete job: {e}\033[0m")
+        return None
+
 """ =================== ADMIN ENDPOINTS VIA CLI ======================= """
 def get_all_jobs():
     headers = get_headers()
@@ -245,7 +276,10 @@ def get_all_jobs():
 
         response.raise_for_status()
         
-        print(f"\033[1;32mSuccessfully retrieved all jobs\033[0m")
+        print(f"\033[1;32mSuccessfully retrieved all jobs:\033[0m")
+        if not response.json():
+            print("\nThere are no active jobs in the system! Lazy much you guys?\n")
+            return None
         
         # we will print only the job IDs, status and created at
         for job in response.json():
@@ -264,6 +298,30 @@ def get_all_jobs():
         else:
             print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
         return None
+
+# -- delete user data (admin only) : DELETE /admin/users/{user_id}
+def delete_user(user_id: str):
+    headers = get_headers()
+    try:
+        print(f"\033[1;32mAttempting to purge all data for user {user_id}...\033[0m")
+        response = requests.delete(f"{API_BASE_URL}/admin/users/{user_id}", headers=headers)
+
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully purged data for user {user_id}\033[0m")
+        print(response.json())
+        return response.json()
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 403:
+            print("\033[91m[Error 403 - Forbidden]. You're not an admin, don't try access admin endpoints.\033[0m")
+        elif response.status_code == 404:
+            print("\033[91m[Error 404 - Not Found]. User either doesn't exist or doesn't have any data (jobs/files) to delete.\033[0m")
+        else:
+            print(f"\033[91mFailed to delete user data: {e}\033[0m")
+        return None
     
 
 if __name__ == "__main__":
@@ -275,34 +333,44 @@ if __name__ == "__main__":
 
     ''' ============ USER & ADMIN ENDPOINTS ============'''
     # -- login --
-    subparsers.add_parser("login", help="Authenticate with Keycloak")
+    subparsers.add_parser("login", help="Authenticate with Keycloak before using any other command")
 
     # -- upload --
-    up_parser = subparsers.add_parser("upload", help="Upload a new workspace")
+    up_parser = subparsers.add_parser("upload", help="Upload mapper, reducer, input code files to minIO")
     up_parser.add_argument("--input", required=True, help="Path to data file")
     up_parser.add_argument("--mapper", required=True, help="Path to mapper script")
     up_parser.add_argument("--reducer", required=True, help="Path to reducer script")
 
+    # -- submit job --
+    submit_parser = subparsers.add_parser("submit", help="Submit a new job (must already have uploaded files to minIO)")
+    submit_parser.add_argument("--input_ref", required=True, help="Reference to the input data (format: bucket/object_name)")
+    submit_parser.add_argument("--mapper_ref", required=True, help="Reference to the mapper code (format: bucket/object_name)")
+    submit_parser.add_argument("--reducer_ref", required=True, help="Reference to the reducer code (format: bucket/object_name)")
+
     # -- get user jobs --
-    subparsers.add_parser("jobs", help="Get all jobs for the authenticated user")
+    subparsers.add_parser("jobs", help="Get all current jobs for your user")
 
     # -- get specific job 
     spec_parser = subparsers.add_parser("job", help="Get a specific job")
     spec_parser.add_argument("--job_id", required=True, help="ID of the job to retrieve")
 
-    # -- submit job --
-    submit_parser = subparsers.add_parser("submit", help="Submit a new job")
-    submit_parser.add_argument("--input_ref", required=True, help="Reference to the input data")
-    submit_parser.add_argument("--mapper_ref", required=True, help="Reference to the mapper code")
-    submit_parser.add_argument("--reducer_ref", required=True, help="Reference to the reducer code")
+    
+
+    # -- delete job --
+    del_parser = subparsers.add_parser("delete", help="Delete a specific job")
+    del_parser.add_argument("--job_id", required=True, help="ID of the job to delete")
     
     ''' ============ ADMIN ENDPOINTS ============'''
     # -- get all jobs --
-    subparsers.add_parser("all-jobs", help="Get all jobs for the authenticated user")
+    subparsers.add_parser("all-jobs", help="-ADMIN- : Get all jobs system-wide")
+
+    # -- delete user data --
+    del_user_parser = subparsers.add_parser("delete-user", help="-ADMIN- : Delete all data for a specific user")
+    del_user_parser.add_argument("--user_id", required=True, help="ID of the user to delete data for")
 
     args = parser.parse_args()
 
-    # --- execution logic ---
+    ''' ============ EXECUTION LOGIC ============'''
 
     if not args.command: # if no command is provided, print the banner and the help message
         print_banner()
@@ -332,6 +400,14 @@ if __name__ == "__main__":
         get_job(args.job_id)
         sys.exit(0)
     
+    if args.command == "delete":
+        delete_job(args.job_id)
+        sys.exit(0)
+    
     if args.command == "all-jobs":
         get_all_jobs()
+        sys.exit(0)
+        
+    if args.command == "delete-user":
+        delete_user(args.user_id)
         sys.exit(0)

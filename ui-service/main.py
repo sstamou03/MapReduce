@@ -190,6 +190,12 @@ async def submit_job(
         - notify manager service
     '''
 
+    # Validate that the references exist in MinIO
+    for ref in [job_in.input_code_ref, job_in.mapper_code_ref, job_in.reducer_code_ref]:
+        if not storage.check_ref_exists(ref):
+            logger.error(f"User {user_id} tried to submit job with invalid MinIO ref: {ref}")
+            raise HTTPException(status_code=400, detail=f"Invalid storage reference: '{ref}' does not exist in MinIO.Please re-upload your files or try again.")
+
     try:
         new_job = crud.create_job(
             db=db,
@@ -333,10 +339,13 @@ async def delete_user_data(
     admin_id: str = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
+    logger.info(f"Admin user {admin_id} is purging data for user: {user_id}.")
+
     '''
-    admin ONLY: Delete a user's data.
+    admin ONLY: Delete a user's data, after cancelling all their active jobs.
     This concerns the DB and MinIO -ONLY-
-    The user's account in Keycloak remains untouched.
+    The user's account in Keycloak remains untouched, and has to be purged manually by the admin.
+
     Therefore, if an admin uses this function without deleting the user's keycloak account, then the 
     user will be able to log in again, but will not have any data.
     On the other hand, if the admin only deletes the user's keycloak account, then their
@@ -344,7 +353,28 @@ async def delete_user_data(
     specific account.
 
     THIS is what this function takes care of. 
-    When the admin calls it, it purges the system (postgresql & minio) from the specific user, so that then they
-    can be deleted from keycloak as well.
+    When it's called :
+    1) All the jobs that belong to the user and are currently running or submitted, are first cancelled by sending 
+    a request to the manager service.
+    2) Once all active jobs are cancelled, the user's data is deleted from the database.
+    3) Finally, the user's data is deleted from MinIO.
+    4) Then, the admin can externally visit Keycloak on their own and handle the user deletion from there.
     '''
-    return {"message": f"User {user_id} deletion requested"}
+    try:
+        # 2) MinIO : Delete all folders named "user-{user_id}"
+        deleted_files_count = storage.delete_user_files(user_id)
+                    
+        # 3) remove all job and task rows that are related with the user_id in the database
+        # This will also delete any job-specific files in MinIO (intermediates, inputs, outputs)
+        deleted_jobs_count = crud.delete_user_jobs(db, user_id)
+        
+    except Exception as e:
+        logger.error(f"Error purging data for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to purge user data: {str(e)}")
+
+    if deleted_jobs_count == 0 and deleted_files_count == 0:
+        logger.warning(f"Admin {admin_id} tried to delete data for user {user_id}, but no data was found.")
+        raise HTTPException(status_code=404, detail=f"User {user_id} not found, or doesn't have any active jobs or files.")
+        
+    logger.info(f"Successfully purged data for user {user_id}. Deleted {deleted_jobs_count} jobs and {deleted_files_count} files.")
+    return {"message": f"User {user_id} data deleted successfully. {deleted_jobs_count} jobs and {deleted_files_count} files removed."}

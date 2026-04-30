@@ -91,6 +91,20 @@ def get_data_from_ref(ref: str) -> bytes:
     bucket_name, object_name = parts
     return get_data_bytes(bucket_name, object_name)
 
+def check_ref_exists(ref: str) -> bool:
+    """
+    Checks if a reference ('bucket_name/object_name') exists in MinIO.
+    """
+    parts = ref.split('/', 1)
+    if len(parts) != 2:
+        return False
+    bucket_name, object_name = parts
+    try:
+        minio_client.stat_object(bucket_name, object_name)
+        return True
+    except S3Error:
+        return False
+
 def delete_job_files(job_id: str):
     """
     Deletes all files in MinIO related to a specific job.
@@ -188,3 +202,24 @@ def shuffle_intermediate_results(job_id: str, intermediate_refs: list) -> str:
 
 
 # data deletion
+def delete_user_files(user_id: str) -> int:
+    """
+    Deletes all files in MinIO uploaded by a specific user.
+    This specifically cleans the user's root folders in code and inputs buckets.
+    Returns the number of files deleted.
+    """
+    prefix = f"user-{user_id}/"
+    buckets_to_clean = ["mapreduce-code", "mapreduce-inputs"]
+    count = 0
+
+    for bucket in buckets_to_clean:
+        try:
+            if minio_client.bucket_exists(bucket):
+                objects_to_delete = minio_client.list_objects(bucket, prefix=prefix, recursive=True)
+                for obj in objects_to_delete:
+                    minio_client.remove_object(bucket, obj.object_name)
+                    count += 1
+        except S3Error as e:
+            print(f"[-] Error cleaning bucket {bucket} for user {user_id}: {e}")
+    
+    return count
