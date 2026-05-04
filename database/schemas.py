@@ -23,6 +23,8 @@ class JobCreate(BaseModel):
     input_code_ref: str
     mapper_code_ref: str
     reducer_code_ref: str
+    num_mappers: int = 3
+    num_reducers: int = 1
 
 
 class JobResponse(BaseModel):
@@ -37,6 +39,8 @@ class JobResponse(BaseModel):
     mapper_code_ref: str
     reducer_code_ref: str
     output_code_ref: Optional[str] = None
+    num_mappers: int = 3
+    num_reducers: int = 1
     created_at: datetime
     updated_at: datetime
 
@@ -91,6 +95,8 @@ class JobDetailResponse(BaseModel):
     mapper_code_ref: str
     reducer_code_ref: str
     output_code_ref: Optional[str] = None
+    num_mappers: int = 3
+    num_reducers: int = 1
     created_at: datetime
     updated_at: datetime
     tasks: List[TaskResponse] = []

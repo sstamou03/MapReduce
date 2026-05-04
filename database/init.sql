@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     mapper_code_ref VARCHAR(512) NOT NULL,
     reducer_code_ref VARCHAR(512) NOT NULL,
     output_code_ref VARCHAR(512),
+    num_mappers INTEGER DEFAULT 3,
+    num_reducers INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

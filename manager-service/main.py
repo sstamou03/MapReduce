@@ -107,8 +107,8 @@ def start_job_orchestration(job_id: uuid.UUID, db_session: Session):
         crud.update_job_status(db_session, job_str, db.JobStatus.RUNNING)
         logger.info(f"[✓] Job {job_str} (User: {job.user_id}) is now RUNNING.")
 
-        # Data Partitioning
-        num_mappers = 3 
+        # Data Partitioning — num_mappers comes from the Job record (user-configurable)
+        num_mappers = job.num_mappers or 3
         partition_refs = storage.split_and_upload_input(
             job_id=job_str,
             input_ref=job.input_code_ref,

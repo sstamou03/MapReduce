@@ -165,5 +165,35 @@ class TestManagerOrchestration(unittest.TestCase):
 
         print("[OK] Abort Test: Pod killing and status updates verified.")
 
+    # --- TEST: CUSTOM NUM_MAPPERS ---
+    @patch("database.crud.get_job")
+    @patch("database.crud.update_job_status")
+    @patch("database.storage.split_and_upload_input")
+    @patch("database.crud.create_task")
+    @patch("main.create_worker_pod")
+    def test_custom_num_mappers(self, mock_pod, mock_create_task, mock_split, mock_update_status, mock_get_job):
+        """
+        Verifies that num_mappers from the Job record is used
+        instead of the old hardcoded value of 3.
+        """
+        mock_job = MagicMock()
+        mock_job.job_id = self.job_id
+        mock_job.num_mappers = 5  # User requested 5 mappers
+        mock_get_job.return_value = mock_job
+        mock_split.return_value = ["ref0", "ref1", "ref2", "ref3", "ref4"]
+
+        start_job_orchestration(self.job_id, self.db_session)
+
+        # split_and_upload_input should be called with num_mappers=5
+        mock_split.assert_called_once()
+        call_kwargs = mock_split.call_args
+        self.assertEqual(call_kwargs[1]["num_mappers"], 5)
+
+        # Should create exactly 5 tasks, not 3
+        self.assertEqual(mock_create_task.call_count, 5)
+        self.assertEqual(mock_pod.call_count, 5)
+
+        print("[OK] Custom num_mappers test: 5 mappers created instead of default 3.")
+
 if __name__ == "__main__":
     unittest.main()

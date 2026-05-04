@@ -10,7 +10,7 @@ This module hides raw SQLAlchemy queries from the rest of the application.
 #ಠ ͜ʖ ಠ
 #jobs
 
-def create_job(db: Session, user_id: str, input_code_ref: str, mapper_code_ref: str, reducer_code_ref: str) -> Job:
+def create_job(db: Session, user_id: str, input_code_ref: str, mapper_code_ref: str, reducer_code_ref: str, num_mappers: int = 3, num_reducers: int = 1) -> Job:
     """
     Called by the UI service (POST /jobs) or Manager service when a new job is submitted.
     Creates a new Job record in the database with status SUBMITTED.
@@ -21,7 +21,9 @@ def create_job(db: Session, user_id: str, input_code_ref: str, mapper_code_ref: 
         status=JobStatus.SUBMITTED,
         input_code_ref=input_code_ref,
         mapper_code_ref=mapper_code_ref,
-        reducer_code_ref=reducer_code_ref
+        reducer_code_ref=reducer_code_ref,
+        num_mappers=num_mappers,
+        num_reducers=num_reducers
     )
     db.add(new_job)
     db.commit()

@@ -217,12 +217,14 @@ def get_job(job_id:str):
         return None
 
 # -- submit job : POST /jobs
-def submit_job(input_ref:str, mapper_ref:str, reducer_ref:str):
+def submit_job(input_ref:str, mapper_ref:str, reducer_ref:str, num_mappers:int = 3, num_reducers:int = 1):
     headers = get_headers()
     payload = {
         "input_code_ref": input_ref,
         "mapper_code_ref": mapper_ref,
         "reducer_code_ref": reducer_ref,
+        "num_mappers": num_mappers,
+        "num_reducers": num_reducers,
     }
     try:
         print(f"\033[1;32mAttempting to submit job to the database...\033[0m")
@@ -346,6 +348,8 @@ if __name__ == "__main__":
     submit_parser.add_argument("--input_ref", required=True, help="Reference to the input data (format: bucket/object_name)")
     submit_parser.add_argument("--mapper_ref", required=True, help="Reference to the mapper code (format: bucket/object_name)")
     submit_parser.add_argument("--reducer_ref", required=True, help="Reference to the reducer code (format: bucket/object_name)")
+    submit_parser.add_argument("--num_mappers", type=int, default=3, help="Number of mapper workers (default: 3)")
+    submit_parser.add_argument("--num_reducers", type=int, default=1, help="Number of reducer workers (default: 1)")
 
     # -- get user jobs --
     subparsers.add_parser("jobs", help="Get all current jobs for your user")
@@ -389,7 +393,7 @@ if __name__ == "__main__":
         sys.exit(0)
     
     if args.command == "submit":
-        submit_job(args.input_ref, args.mapper_ref, args.reducer_ref)
+        submit_job(args.input_ref, args.mapper_ref, args.reducer_ref, args.num_mappers, args.num_reducers)
         sys.exit(0)
     
     if args.command == "jobs":

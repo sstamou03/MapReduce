@@ -202,7 +202,9 @@ async def submit_job(
             user_id=user_id,
             input_code_ref=job_in.input_code_ref,
             mapper_code_ref=job_in.mapper_code_ref,
-            reducer_code_ref=job_in.reducer_code_ref
+            reducer_code_ref=job_in.reducer_code_ref,
+            num_mappers=job_in.num_mappers,
+            num_reducers=job_in.num_reducers
         )
         
         logger.info(f"User {user_id} submitted a new job {new_job.job_id}.")

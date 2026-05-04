@@ -1,7 +1,7 @@
 import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import create_engine, Column, String, Enum, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, String, Integer, Enum, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from .storage import minio_client
@@ -56,6 +56,8 @@ class Job(Base):
     mapper_code_ref = Column(String(512), nullable=False)
     reducer_code_ref = Column(String(512), nullable=False)
     output_code_ref = Column(String(512), nullable=True)
+    num_mappers = Column(Integer, default=3)
+    num_reducers = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
