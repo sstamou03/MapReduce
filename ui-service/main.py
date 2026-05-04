@@ -280,20 +280,24 @@ async def abort_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
     if job.status in ["SUBMITTED", "RUNNING"]:
-        ## fill this with the request to manager service to nuke the job (pun intended)
-        pass
+        # Send abort request to Manager — this kills K8s pods and marks tasks as FAILED
+        try:
+            async with httpx.AsyncClient() as client:
+                abort_response = await client.delete(
+                    f"http://manager-service:8000/manager/jobs/{job_id}",
+                    timeout=10.0
+                )
+                abort_response.raise_for_status()
+                logger.info(f"Manager successfully aborted job {job_id}: {abort_response.json()}")
+        except Exception as mgr_err:
+            logger.warning(f"Manager abort request failed for job {job_id}: {mgr_err}. Proceeding with local cleanup.")
     
     if job.user_id != current_user_id and not isAdmin:
         logger.warning(f"User {current_user_id} tried to delete job {job_id} that is not theirs.")
         raise HTTPException(status_code=403, detail="This job is not yours to delete!")
     
-    # --- REMEMBER TO FILL THIS PAAAAAAAART ------
-    # here we should send a request to the manager service to delete the job
-    # if the job is completed/failed, we can delete it from the database
-    # if the job is running/submitted/retrying/pending, we should send a request to the manager service to abort the job first
-    # then we can delete it from the database
-    
-    # first delete minIO data associated with the job
+    # Clean up intermediate MinIO files (partitions, intermediate results)
+    # NOTE: The user's original uploads (under user-{id}/) are NOT deleted
     storage.delete_job_files(str(job_id))
     
     deleted = crud.delete_job(db, job_id=job_id)

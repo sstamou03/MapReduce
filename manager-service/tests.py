@@ -63,7 +63,7 @@ class TestManagerOrchestration(unittest.TestCase):
         
         # Confirm we created EXACTLY 3 tasks in the DB
         self.assertEqual(mock_create_task.call_count, 3)
-        print("[✓] Step 1 Test: Partitioning and Single-Loop Task Ledger verified.")
+        print("[OK] Step 1 Test: Partitioning and Single-Loop Task Ledger verified.")
 
     # --- TEST: STEP 2 (K8s SPAWNING) ---
     @patch("main.k8s_batch_v1")
@@ -102,12 +102,68 @@ class TestManagerOrchestration(unittest.TestCase):
         task_type_env = next(e for e in env_vars if e.name == "TASK_TYPE")
         self.assertEqual(task_type_env.value, "MAP")
         
-        print("[✓] Step 2 Test: Dynamic Pod Spawning verified.")
+        print("[OK] Step 2 Test: Dynamic Pod Spawning verified.")
 
     def test_healthz(self):
         """Check the Kubernetes Liveness probe."""
         response = client.get("/healthz")
         self.assertEqual(response.status_code, 200)
+
+    # --- TEST: ABORT JOB ---
+    @patch("main.k8s_batch_v1")
+    @patch("database.crud.update_job_status")
+    @patch("database.crud.update_task_status")
+    @patch("database.crud.get_tasks_for_job")
+    @patch("database.crud.get_job")
+    def test_abort_job(self, mock_get_job, mock_get_tasks, mock_update_task, mock_update_job, mock_k8s):
+        """
+        Verifies that DELETE /manager/jobs/{job_id}:
+        1. Finds all tasks for the job
+        2. Attempts to kill K8s Jobs for each task
+        3. Marks running tasks as FAILED
+        4. Marks the job as FAILED
+        """
+        mock_job = MagicMock()
+        mock_job.job_id = self.job_id
+        mock_job.status = db.JobStatus.RUNNING
+        mock_get_job.return_value = mock_job
+
+        # Create 3 mock tasks (2 running, 1 completed)
+        task1 = MagicMock()
+        task1.task_id = uuid.uuid4()
+        task1.status = db.TaskStatus.RUNNING
+
+        task2 = MagicMock()
+        task2.task_id = uuid.uuid4()
+        task2.status = db.TaskStatus.RUNNING
+
+        task3 = MagicMock()
+        task3.task_id = uuid.uuid4()
+        task3.status = db.TaskStatus.COMPLETED  # Already done, should NOT be updated
+
+        mock_get_tasks.return_value = [task1, task2, task3]
+
+        response = client.delete(f"/manager/jobs/{self.job_id}")
+
+        # Endpoint should return 200
+        self.assertEqual(response.status_code, 200)
+
+        # K8s should be called 3 times (tries to delete all pods)
+        self.assertEqual(mock_k8s.delete_namespaced_job.call_count, 3)
+
+        # Only 2 tasks should be marked as FAILED (the COMPLETED one is skipped)
+        self.assertEqual(mock_update_task.call_count, 2)
+
+        # Job should be marked as FAILED
+        mock_update_job.assert_called_with(
+            unittest.mock.ANY, str(self.job_id), db.JobStatus.FAILED
+        )
+
+        data = response.json()
+        self.assertEqual(data["killed_pods"], 3)
+        self.assertEqual(data["failed_tasks"], 3)
+
+        print("[OK] Abort Test: Pod killing and status updates verified.")
 
 if __name__ == "__main__":
     unittest.main()

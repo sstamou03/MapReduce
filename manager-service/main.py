@@ -185,6 +185,57 @@ def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = D
     
     return updated_task
 
+@app.delete("/manager/jobs/{job_id}")
+def abort_job(job_id: str, db_session: Session = Depends(db.get_db)):
+    """
+    Abort a running job:
+    1. Kill all active Kubernetes worker pods for this job
+    2. Mark all tasks as FAILED
+    3. Mark the job as FAILED
+    
+    Called by the UI service when a user requests job cancellation.
+    """
+    logger.info(f"[*] Abort requested for Job: {job_id}")
+
+    job = crud.get_job(db_session, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # 1. Find all tasks for this job and kill their K8s Jobs
+    tasks = crud.get_tasks_for_job(db_session, job_id)
+    killed_count = 0
+
+    for task in tasks:
+        pod_name = f"worker-{task.task_id}"
+        
+        # Try to delete the K8s Job (if it exists and is still running)
+        if k8s_batch_v1:
+            try:
+                k8s_batch_v1.delete_namespaced_job(
+                    name=pod_name,
+                    namespace="default",
+                    body=client.V1DeleteOptions(propagation_policy="Background")
+                )
+                killed_count += 1
+                logger.info(f"[✓] Killed K8s Job: {pod_name}")
+            except Exception as e:
+                # Pod might already be done or not exist — that's fine
+                logger.warning(f"[!] Could not kill K8s Job {pod_name}: {e}")
+
+        # 2. Mark each task as FAILED
+        if task.status not in [db.TaskStatus.COMPLETED, db.TaskStatus.FAILED]:
+            crud.update_task_status(db_session, str(task.task_id), db.TaskStatus.FAILED)
+
+    # 3. Mark the job itself as FAILED
+    crud.update_job_status(db_session, job_id, db.JobStatus.FAILED)
+    
+    logger.info(f"[✓] Job {job_id} aborted. Killed {killed_count} K8s pods, marked {len(tasks)} tasks as FAILED.")
+    return {
+        "message": f"Job {job_id} aborted successfully",
+        "killed_pods": killed_count,
+        "failed_tasks": len(tasks)
+    }
+
 @app.get("/healthz")
 def health_check():
     """Liveness probe for Kubernetes orchestration """
