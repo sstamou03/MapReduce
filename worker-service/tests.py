@@ -13,7 +13,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from worker import load_user_module, report_status
 
-
 """
 Unit tests for the Worker Service.
 Tests the dynamic code loading, MAP/REDUCE execution, and status reporting.

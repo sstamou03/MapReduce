@@ -2,6 +2,7 @@ import io
 import uuid
 import os
 import json
+import hashlib
 from minio import Minio
 from minio.error import S3Error
 
@@ -91,20 +92,6 @@ def get_data_from_ref(ref: str) -> bytes:
     bucket_name, object_name = parts
     return get_data_bytes(bucket_name, object_name)
 
-def check_ref_exists(ref: str) -> bool:
-    """
-    Checks if a reference ('bucket_name/object_name') exists in MinIO.
-    """
-    parts = ref.split('/', 1)
-    if len(parts) != 2:
-        return False
-    bucket_name, object_name = parts
-    try:
-        minio_client.stat_object(bucket_name, object_name)
-        return True
-    except S3Error:
-        return False
-
 def delete_job_files(job_id: str):
     """
     Deletes all files in MinIO related to a specific job.
@@ -175,51 +162,50 @@ def split_and_upload_input(job_id: str, input_ref: str, num_mappers: int) -> lis
 
 
 #shuffle
-def shuffle_intermediate_results(job_id: str, intermediate_refs: list) -> str:
+def shuffle_intermediate_results(job_id: str, intermediate_refs: list, num_reducers: int) -> list:
     """
     Downloads all intermediate JSON logs from MinIO, parses them, 
-    merges them into a single massive array, and uploads the shuffled
-    result back to MinIO for the Reducer to use.
+    partitions them into `num_reducers` chunks based on a hash of the key,
+    and uploads each partition back to MinIO.
+    Returns a list of MinIO references for the Reducers to use.
     """
-    all_results = []
+    # Create an array of lists, one for each reducer partition
+    partitions = [[] for _ in range(num_reducers)]
+    
     for ref in intermediate_refs:
         try:
             raw_bytes = get_data_from_ref(ref)
             data = json.loads(raw_bytes.decode("utf-8"))
-            if isinstance(data, list):
-                all_results.extend(data)
-            else:
-                all_results.append(data)
+            
+            # Ensure data is a list of [key, value] pairs
+            if not isinstance(data, list):
+                data = [data]
+                
+            for item in data:
+                # We expect item to be like [key, value]. We hash the key.
+                if isinstance(item, list) and len(item) >= 1:
+                    key_str = str(item[0])
+                else:
+                    # Fallback if the mapper didn't return a standard format
+                    key_str = str(item)
+                    
+                # Use MD5 to get a consistent hash, then modulo num_reducers
+                hash_val = int(hashlib.md5(key_str.encode('utf-8')).hexdigest(), 16)
+                partition_idx = hash_val % num_reducers
+                partitions[partition_idx].append(item)
+                
         except Exception as e:
             print(f"Error shuffling reference {ref}: {e}")
             
-    # Upload the combined result
-    combined_bytes = json.dumps(all_results).encode("utf-8")
+    # Upload the partitioned results
     bucket_name = "mapreduce-intermediates"
-    object_name = f"job-{job_id}/shuffled_output.json"
+    partition_refs = []
     
-    return upload_data_bytes(bucket_name, object_name, combined_bytes)
-
-
-# data deletion
-def delete_user_files(user_id: str) -> int:
-    """
-    Deletes all files in MinIO uploaded by a specific user.
-    This specifically cleans the user's root folders in code and inputs buckets.
-    Returns the number of files deleted.
-    """
-    prefix = f"user-{user_id}/"
-    buckets_to_clean = ["mapreduce-code", "mapreduce-inputs"]
-    count = 0
-
-    for bucket in buckets_to_clean:
-        try:
-            if minio_client.bucket_exists(bucket):
-                objects_to_delete = minio_client.list_objects(bucket, prefix=prefix, recursive=True)
-                for obj in objects_to_delete:
-                    minio_client.remove_object(bucket, obj.object_name)
-                    count += 1
-        except S3Error as e:
-            print(f"[-] Error cleaning bucket {bucket} for user {user_id}: {e}")
+    for i, partition_data in enumerate(partitions):
+        # Even if a partition is empty, we create an empty list so the reducer doesn't fail
+        combined_bytes = json.dumps(partition_data).encode("utf-8")
+        object_name = f"job-{job_id}/shuffled_output_{i}.json"
+        ref = upload_data_bytes(bucket_name, object_name, combined_bytes)
+        partition_refs.append(ref)
     
-    return count
+    return partition_refs

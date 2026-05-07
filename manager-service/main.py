@@ -194,33 +194,38 @@ def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = D
             logger.info(f"[✓] All Mappers for job {job_id} completed. Starting Shuffle/Reduce...")
 
             try:
-                # 3. SHUFFLE PHASE: Merge intermediate outputs
-                intermediate_refs = [t.output_partition_ref for t in all_tasks]
-                shuffled_ref = storage.shuffle_intermediate_results(job_id, intermediate_refs)
-                logger.info(f"[✓] Shuffle complete. Data ready at: {shuffled_ref}")
-
-                # 4. REDUCE PHASE: Create the final task and spawn pod
+                # 3. SHUFFLE PHASE: Partition intermediate outputs
                 job = crud.get_job(db_session, job_id)
-                reducer_task = crud.create_task(
-                    db=db_session,
-                    job_id=job_id,
-                    task_type=db.TaskType.REDUCE,
-                    input_partition_ref=shuffled_ref
-                )
-                
-                create_worker_pod(reducer_task, job)
-                logger.info(f"[+] Reducer pod spawned for task {reducer_task.task_id}")
+                num_reducers = job.num_reducers or 1
+                intermediate_refs = [t.output_partition_ref for t in all_tasks]
+                shuffled_refs = storage.shuffle_intermediate_results(job_id, intermediate_refs, num_reducers)
+                logger.info(f"[✓] Shuffle complete. {len(shuffled_refs)} partitions ready.")
+
+                # 4. REDUCE PHASE: Create tasks and spawn pods
+                for ref in shuffled_refs:
+                    reducer_task = crud.create_task(
+                        db=db_session,
+                        job_id=job_id,
+                        task_type=db.TaskType.REDUCE,
+                        input_partition_ref=ref
+                    )
+                    
+                    create_worker_pod(reducer_task, job)
+                    logger.info(f"[+] Reducer pod spawned for task {reducer_task.task_id}")
 
             except Exception as e:
                 logger.error(f"[X] Failed to transition to Reduce phase for {job_id}: {e}")
                 crud.update_job_status(db_session, job_id, db.JobStatus.FAILED)
 
-    # 5. FINAL COMPLETION: If a REDUCE task finishes, the whole job is done
+    # 5. FINAL COMPLETION: If ALL REDUCE tasks finish, the whole job is done
     elif updated_task.status == db.TaskStatus.COMPLETED and updated_task.task_type == db.TaskType.REDUCE:
         job_id = str(updated_task.job_id)
-        crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
-        crud.update_job_output_ref(db_session, job_id, updated_task.output_partition_ref)
-        logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
+        
+        all_reduce_tasks = crud.get_tasks_for_job(db_session, job_id, task_type=db.TaskType.REDUCE)
+        if all(t.status == db.TaskStatus.COMPLETED for t in all_reduce_tasks):
+            crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
+            crud.update_job_output_ref(db_session, job_id, f"mapreduce-intermediates/job-{job_id}/")
+            logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
     
     return updated_task
 

@@ -35,7 +35,7 @@ def load_user_module(code_path):
 
 
 def report_status(task_id, status, output_ref=None):
-    """Sends an HTTP POST to Rafaela's Manager to report task status."""
+    """Sends an HTTP POST to Manager to report task status."""
     payload = {
         "task_id": task_id,
         "status": status,
@@ -91,6 +91,7 @@ def main():
         download_file(bucket, obj_name, code_path)
         
         print(f"[*] Successfully downloaded the Python script to {code_path}!")
+
 
     except Exception as e:
         print(f"[-] Failed to reach MinIO: {e}")
