@@ -42,18 +42,18 @@ def create_worker_pod(task: schemas.TaskResponse, job: schemas.JobResponse):
     # Unique name for the K8s Job resource
     pod_name = f"worker-{task.task_id}"
     
-    # Environment variables are the ONLY way the worker knows its job
+    # Environment variables are the ONLY way the worker knows its   job
     env_vars = [
         client.V1EnvVar(name="TASK_ID", value=str(task.task_id)),
         client.V1EnvVar(name="JOB_ID", value=str(job.job_id)),
-        client.V1EnvVar(name="TASK_TYPE", value=task.task_type),
+        # FIX: Add .value to ensure we send "MAP" instead of TaskType.MAP
+        client.V1EnvVar(name="TASK_TYPE", value=str(task.task_type.value)), 
         client.V1EnvVar(name="INPUT_REF", value=task.input_partition_ref),
-        # Map tasks use mapper_code_ref, Reduce tasks use reducer_code_ref 
         client.V1EnvVar(
             name="CODE_REF", 
-            value=job.mapper_code_ref if task.task_type == "MAP" else job.reducer_code_ref
+            # FIX: Also ensure these refs are strings if they come from an Enum
+            value=str(job.mapper_code_ref) if task.task_type.value == "MAP" else str(job.reducer_code_ref)
         ),
-        # Internal K8s service name for the manager
         client.V1EnvVar(name="MANAGER_URL", value="http://manager-service:8000"),
     ]
 
@@ -168,10 +168,11 @@ def trigger_job(
 @app.post("/manager/tasks/status", response_model=schemas.TaskResponse)
 def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = Depends(db.get_db)):
     """
-    Receives status updates from Workers (e.g., task completed/failed).
-    Updates the task state in PostgreSQL.
+    Receives status updates from Workers and orchestrates phase transitions.
     """
     logger.info(f"Updating task {update.task_id} to status {update.status}")
+    
+    # 1. Update the individual task in the DB
     updated_task = crud.update_task_status(
         db=db_session,
         task_id=str(update.task_id),
@@ -182,6 +183,44 @@ def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = D
     
     if not updated_task:
         raise HTTPException(status_code=404, detail="Task not found")
+
+    # 2.Check if we should move from MAP to REDUCE
+    if updated_task.status == db.TaskStatus.COMPLETED and updated_task.task_type == db.TaskType.MAP:
+        job_id = str(updated_task.job_id)
+        
+        # Check if all other MAP tasks for this job are finished
+        all_tasks = crud.get_tasks_for_job(db_session, job_id, task_type=db.TaskType.MAP)
+        if all(t.status == db.TaskStatus.COMPLETED for t in all_tasks):
+            logger.info(f"[✓] All Mappers for job {job_id} completed. Starting Shuffle/Reduce...")
+
+            try:
+                # 3. SHUFFLE PHASE: Merge intermediate outputs
+                intermediate_refs = [t.output_partition_ref for t in all_tasks]
+                shuffled_ref = storage.shuffle_intermediate_results(job_id, intermediate_refs)
+                logger.info(f"[✓] Shuffle complete. Data ready at: {shuffled_ref}")
+
+                # 4. REDUCE PHASE: Create the final task and spawn pod
+                job = crud.get_job(db_session, job_id)
+                reducer_task = crud.create_task(
+                    db=db_session,
+                    job_id=job_id,
+                    task_type=db.TaskType.REDUCE,
+                    input_partition_ref=shuffled_ref
+                )
+                
+                create_worker_pod(reducer_task, job)
+                logger.info(f"[+] Reducer pod spawned for task {reducer_task.task_id}")
+
+            except Exception as e:
+                logger.error(f"[X] Failed to transition to Reduce phase for {job_id}: {e}")
+                crud.update_job_status(db_session, job_id, db.JobStatus.FAILED)
+
+    # 5. FINAL COMPLETION: If a REDUCE task finishes, the whole job is done
+    elif updated_task.status == db.TaskStatus.COMPLETED and updated_task.task_type == db.TaskType.REDUCE:
+        job_id = str(updated_task.job_id)
+        crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
+        crud.update_job_output_ref(db_session, job_id, updated_task.output_partition_ref)
+        logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
     
     return updated_task
 

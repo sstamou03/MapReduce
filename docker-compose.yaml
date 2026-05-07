@@ -18,19 +18,24 @@ services:
       - minio
 
   manager-service:
+    extra_hosts:
+    - "host.docker.internal:host-gateway"
     build:
       context: .
       dockerfile: manager-service/Dockerfile
     container_name: mapreduce-manager
     ports:
-      - "8001:8000" # Map to 8001 so it doesn't conflict with the UI on 8000
+      - "8001:8000"
     environment:
       - DATABASE_URL=postgresql://mapreduce_user:mapreduce_password@postgres:5432/mapreduce_db
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=12345678
-      # We set this so the Manager knows where the cluster is later
-      - KUBERNETES_SERVICE_HOST=
+      # 1. Point the Python app to the internal location
+      - KUBECONFIG=/etc/k8s/kubeconfig
+    volumes:
+      # 2. Mount the portable file we just created
+      - ./manager-service/kubeconfig_portable:/etc/k8s/kubeconfig:ro
     depends_on:
       - postgres
       - minio
@@ -39,6 +44,7 @@ services:
     image: quay.io/keycloak/keycloak:24.0.0
     container_name: mapreduce-keycloak
     command: start-dev # 'start-dev' is perfect for our project; it skips complex SSL setup
+    restart: on-failure  # Restart if it hits that JDBC timeout
     environment:
       # initial admin credentials
       - KEYCLOAK_ADMIN=admin
@@ -52,12 +58,18 @@ services:
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy # This waits for the healthcheck above
 
 
   postgres:
     image: postgres:15-alpine
     container_name: mapreduce-postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mapreduce_user -d mapreduce_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     environment:
       POSTGRES_USER: mapreduce_user
       POSTGRES_PASSWORD: mapreduce_password

@@ -26,3 +26,4 @@ Thumbs.db
 .frappe_token
 .frappe_tokens*.csv
 input_data.csv
+minikube-linux-amd64
