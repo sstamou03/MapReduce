@@ -15,6 +15,33 @@ logging.basicConfig(
 
 logger = logging.getLogger("manager-service")
 
+class TaskStateController:
+    """
+    Core logic for task state management.
+    Ensures that retries and phase transitions are handled atomically.
+    """
+    ALLOWED_TRANSITIONS = {
+        db.TaskStatus.PENDING: [db.TaskStatus.RUNNING, db.TaskStatus.FAILED],
+        db.TaskStatus.RUNNING: [db.TaskStatus.COMPLETED, db.TaskStatus.FAILED, db.TaskStatus.RETRYING],
+        db.TaskStatus.RETRYING: [db.TaskStatus.RUNNING, db.TaskStatus.FAILED],
+        db.TaskStatus.FAILED: [db.TaskStatus.RETRYING],
+        db.TaskStatus.COMPLETED: []
+    }
+
+    @staticmethod
+    def process_update(db_session, task_id, new_status, pod_id=None, output_ref=None):
+        task = crud.get_task_by_id(db_session, task_id)
+        if not task:
+            logger.error(f"Task {task_id} not found.")
+            return None
+
+        # This logic implements the Fault Tolerance requirement for retries 
+        if new_status not in TaskStateController.ALLOWED_TRANSITIONS.get(task.status, []):
+            logger.warning(f"Illegal transition: {task.status} -> {new_status}")
+            return task
+
+        return crud.update_task_status(db_session, task_id, new_status, pod_id, output_ref)
+
 app = FastAPI(title="Manager Service")
 
 # 2. Initialize Kubernetes Client
