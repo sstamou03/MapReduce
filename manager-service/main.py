@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Header
@@ -162,6 +163,79 @@ def start_job_orchestration(job_id: uuid.UUID, db_session: Session):
         logger.error(f"[X] Orchestration error for {job_str}: {str(e)}")
         crud.update_job_status(db_session, job_str, db.JobStatus.FAILED)
 
+async def handle_phase_progression(db_session: Session, job_id: str):
+    """
+    Orchestrates the transition between Map, Shuffle, and Reduce phases.
+    Ensures all tasks of a phase are COMPLETED before starting the next [cite: 130-131].
+    """
+    job = crud.get_job(db_session, job_id)
+    if not job:
+        logger.error(f"Job {job_id} not found during phase check.")
+        return
+
+    # 1. Fetch all current tasks for this job 
+    all_tasks = crud.get_tasks_for_job(db_session, job_id)
+    mappers = [t for t in all_tasks if t.task_type == db.TaskType.MAP]
+    reducers = [t for t in all_tasks if t.task_type == db.TaskType.REDUCE]
+
+    # 2. Transition from MAP to REDUCE [cite: 131]
+    if mappers and all(m.status == db.TaskStatus.COMPLETED for m in mappers) and not reducers:
+        logger.info(f"--- [PHASE TRANSITION] Job {job_id}: Mappers finished. Starting Shuffle. ---")
+        
+        try:
+            # SHUFFLE - Aggregate intermediate outputs [cite: 132]
+            num_reducers = job.num_reducers or 1
+            intermediate_refs = [t.output_partition_ref for t in mappers if t.output_partition_ref]
+            
+            shuffled_refs = storage.shuffle_intermediate_results(job_id, intermediate_refs, num_reducers)
+            logger.info(f"[✓] Shuffle complete. {len(shuffled_refs)} partitions generated.")
+
+            # REDUCE - Create tasks and spawn K8s Jobs [cite: 131-132]
+            for ref in shuffled_refs:
+                reducer_task = crud.create_task(
+                    db=db_session, job_id=job_id,
+                    task_type=db.TaskType.REDUCE, input_partition_ref=ref
+                )
+                create_worker_pod(reducer_task, job)
+                logger.info(f"[+] Reducer pod spawned for task {reducer_task.task_id}")
+
+        except Exception as e:
+            logger.error(f"[X] Shuffle/Reduce failed for {job_id}: {e}")
+            crud.update_job_status(db_session, job_id, db.JobStatus.FAILED)
+
+    # 3. FINAL COMPLETION [cite: 133]
+    elif reducers and all(r.status == db.TaskStatus.COMPLETED for r in reducers):
+        logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
+        crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
+        crud.update_job_output_ref(db_session, job_id, f"mapreduce-outputs/job-{job_id}/")
+
+async def run_reconciliation(db_session: Session):
+    """
+    Continuously monitors K8s to ensure pods haven't vanished[cite: 177, 243].
+    """
+    while True:
+        try:
+            # We fetch all tasks that our DDS says are 'RUNNING' 
+            running_tasks = crud.get_all_running_tasks(db_session)
+            for task in running_tasks:
+                pod_name = f"worker-{task.task_id}"
+                try:
+                    # Query K8s Batch API for the specific Job state 
+                    k8s_job = k8s_batch_v1.read_namespaced_job(pod_name, "default")
+                    
+                    # If K8s says it failed, we trigger the recovery use case 
+                    if k8s_job.status.failed:
+                        logger.warning(f"Self-Healing: Task {task.task_id} failed in K8s. Re-scheduling...")
+                        # This is where we would call your new retry logic
+                except Exception as e:
+                    # If 404, the pod was manually deleted 
+                    logger.error(f"Self-Healing: Pod {pod_name} is missing! Recovering...")
+            
+            await asyncio.sleep(5) # Check every 5 seconds
+        except Exception as e:
+            logger.error(f"Watchdog Error: {e}")
+            await asyncio.sleep(5)
+
 @app.post("/manager/jobs")
 def trigger_job(
     payload: dict, # Expecting {"job_id": "uuid-string"}
@@ -193,66 +267,28 @@ def trigger_job(
     return {"message": "Orchestration started", "job_id": job_id}
 
 @app.post("/manager/tasks/status", response_model=schemas.TaskResponse)
-def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = Depends(db.get_db)):
+async def update_task_status(update: schemas.TaskStatusUpdate, db_session: Session = Depends(db.get_db)):
     """
-    Receives status updates from Workers and orchestrates phase transitions.
+    Refactored endpoint: Processes status updates via the State Controller.
+    Triggers phase transitions (Map -> Shuffle -> Reduce) automatically.
     """
-    logger.info(f"Updating task {update.task_id} to status {update.status}")
+    logger.info(f"[*] Received status update for task {update.task_id}: {update.status}")
     
-    # 1. Update the individual task in the DB
-    updated_task = crud.update_task_status(
-        db=db_session,
+    # Use the Controller to validate and persist the state change
+    updated_task = TaskStateController.process_update(
+        db_session,
         task_id=str(update.task_id),
         new_status=update.status,
-        worker_pod_id=update.worker_pod_id,
-        output_partition_ref=update.output_partition_ref
+        pod_id=update.worker_pod_id,
+        output_ref=update.output_partition_ref
     )
     
     if not updated_task:
-        raise HTTPException(status_code=404, detail="Task not found")
+        raise HTTPException(status_code=404, detail="Task not found or illegal transition")
 
-    # 2.Check if we should move from MAP to REDUCE
-    if updated_task.status == db.TaskStatus.COMPLETED and updated_task.task_type == db.TaskType.MAP:
-        job_id = str(updated_task.job_id)
-        
-        # Check if all other MAP tasks for this job are finished
-        all_tasks = crud.get_tasks_for_job(db_session, job_id, task_type=db.TaskType.MAP)
-        if all(t.status == db.TaskStatus.COMPLETED for t in all_tasks):
-            logger.info(f"[✓] All Mappers for job {job_id} completed. Starting Shuffle/Reduce...")
-
-            try:
-                # 3. SHUFFLE PHASE: Partition intermediate outputs
-                job = crud.get_job(db_session, job_id)
-                num_reducers = job.num_reducers or 1
-                intermediate_refs = [t.output_partition_ref for t in all_tasks]
-                shuffled_refs = storage.shuffle_intermediate_results(job_id, intermediate_refs, num_reducers)
-                logger.info(f"[✓] Shuffle complete. {len(shuffled_refs)} partitions ready.")
-
-                # 4. REDUCE PHASE: Create tasks and spawn pods
-                for ref in shuffled_refs:
-                    reducer_task = crud.create_task(
-                        db=db_session,
-                        job_id=job_id,
-                        task_type=db.TaskType.REDUCE,
-                        input_partition_ref=ref
-                    )
-                    
-                    create_worker_pod(reducer_task, job)
-                    logger.info(f"[+] Reducer pod spawned for task {reducer_task.task_id}")
-
-            except Exception as e:
-                logger.error(f"[X] Failed to transition to Reduce phase for {job_id}: {e}")
-                crud.update_job_status(db_session, job_id, db.JobStatus.FAILED)
-
-    # 5. FINAL COMPLETION: If ALL REDUCE tasks finish, the whole job is done
-    elif updated_task.status == db.TaskStatus.COMPLETED and updated_task.task_type == db.TaskType.REDUCE:
-        job_id = str(updated_task.job_id)
-        
-        all_reduce_tasks = crud.get_tasks_for_job(db_session, job_id, task_type=db.TaskType.REDUCE)
-        if all(t.status == db.TaskStatus.COMPLETED for t in all_reduce_tasks):
-            crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
-            crud.update_job_output_ref(db_session, job_id, f"mapreduce-intermediates/job-{job_id}/")
-            logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
+    # Trigger Phase Progression check if a task completed 
+    if updated_task.status == db.TaskStatus.COMPLETED:
+        await handle_phase_progression(db_session, str(updated_task.job_id))
     
     return updated_task
 
