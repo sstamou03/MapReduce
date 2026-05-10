@@ -393,6 +393,26 @@ async def delete_user_data(
     4) Then, the admin can externally visit Keycloak on their own and handle the user deletion from there.
     '''
     try:
+        # 1) Fetch user's jobs and cancel any that are active
+        user_jobs = crud.get_jobs_for_user(db, user_id)
+        manager_replicas = int(os.environ.get("MANAGER_REPLICAS", "1"))
+        
+        async with httpx.AsyncClient() as client:
+            for job in user_jobs:
+                if job.status in ["SUBMITTED", "RUNNING"]:
+                    try:
+                        replica_idx = int(str(job.job_id).replace("-", ""), 16) % manager_replicas
+                        manager_url = f"http://mapreduce-manager-{replica_idx}.manager-service.default.svc.cluster.local:8000"
+                        
+                        abort_response = await client.delete(
+                            f"{manager_url}/manager/jobs/{job.job_id}",
+                            timeout=10.0
+                        )
+                        abort_response.raise_for_status()
+                        logger.info(f"Successfully aborted active job {job.job_id} before user deletion.")
+                    except Exception as mgr_err:
+                        logger.warning(f"Failed to abort active job {job.job_id} during user purge: {mgr_err}. It might be orphaned.")
+
         # 2) MinIO : Delete all folders named "user-{user_id}"
         deleted_files_count = storage.delete_user_files(user_id)
                     
