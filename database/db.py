@@ -21,8 +21,9 @@ provides a `get_minio()` dependency generator for the endpoints.
 
 
 """
+import os
 
-SQLALCHEMY_DATABASE_URL = "postgresql://mapreduce_user:mapreduce_password@postgres:5432/mapreduce_db"
+SQLALCHEMY_DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://mapreduce_user:mapreduce_password@postgres:5432/mapreduce_db")
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

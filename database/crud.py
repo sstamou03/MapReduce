@@ -113,6 +113,12 @@ def create_task(db: Session, job_id: str, task_type: TaskType, input_partition_r
     db.refresh(new_task)
     return new_task
 
+def get_task_by_id(db: Session, task_id: str) -> Task:
+    """
+    Retrieves a specific task by its ID.
+    """
+    return db.query(Task).filter(Task.task_id == task_id).first()
+
 def get_tasks_for_job(db: Session, job_id: str, task_type: TaskType = None):
     """
     Called by the Manager service to monitor the progress of a job.

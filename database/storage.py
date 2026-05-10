@@ -61,6 +61,14 @@ def upload_intermediate_result(job_id: str, task_id: str, data: bytes) -> str:
     object_name = f"job-{job_id}/task-{task_id}_output"
     return upload_data_bytes(bucket_name, object_name, data)
 
+def upload_final_result(job_id: str, data: bytes) -> str:
+    """
+    Uploads the final reduced output to MinIO.
+    """
+    bucket_name = "mapreduce-outputs"
+    object_name = f"job-{job_id}/result.json"
+    return upload_data_bytes(bucket_name, object_name, data)
+
 def download_file(bucket_name: str, object_name: str, file_path: str):
     """
     Download an object from MinIO to a local file.
@@ -91,6 +99,25 @@ def get_data_from_ref(ref: str) -> bytes:
         raise ValueError(f"Invalid storage reference format: {ref}. Expected 'bucket_name/object_name'.")
     bucket_name, object_name = parts
     return get_data_bytes(bucket_name, object_name)
+
+def check_ref_exists(ref: str) -> bool:
+    """
+    Check if a given MinIO reference (e.g. 'bucket_name/object_name') exists.
+    """
+    try:
+        parts = ref.split('/', 1)
+        if len(parts) != 2:
+            return False
+        bucket_name, object_name = parts
+        
+        minio_client.stat_object(bucket_name, object_name)
+        return True
+    except S3Error as err:
+        if err.code in ("NoSuchKey", "NoSuchBucket"):
+            return False
+        raise
+    except Exception:
+        return False
 
 def delete_job_files(job_id: str):
     """
@@ -169,12 +196,22 @@ def shuffle_intermediate_results(job_id: str, intermediate_refs: list, num_reduc
     and uploads each partition back to MinIO.
     Returns a list of MinIO references for the Reducers to use.
     """
-    # Create an array of lists, one for each reducer partition
-    partitions = [[] for _ in range(num_reducers)]
+    import tempfile
+    import os
+
+    # Open temp files for each reducer partition
+    temp_files = []
+    first_item = []
+    for _ in range(num_reducers):
+        tf = tempfile.NamedTemporaryFile(delete=False, mode='w', encoding='utf-8')
+        tf.write("[\n") # Start JSON array
+        temp_files.append(tf)
+        first_item.append(True)
     
     for ref in intermediate_refs:
         try:
             raw_bytes = get_data_from_ref(ref)
+            # Load one mapper's data at a time to save memory
             data = json.loads(raw_bytes.decode("utf-8"))
             
             # Ensure data is a list of [key, value] pairs
@@ -182,17 +219,25 @@ def shuffle_intermediate_results(job_id: str, intermediate_refs: list, num_reduc
                 data = [data]
                 
             for item in data:
-                # We expect item to be like [key, value]. We hash the key.
                 if isinstance(item, list) and len(item) >= 1:
                     key_str = str(item[0])
                 else:
-                    # Fallback if the mapper didn't return a standard format
                     key_str = str(item)
                     
-                # Use MD5 to get a consistent hash, then modulo num_reducers
                 hash_val = int(hashlib.md5(key_str.encode('utf-8')).hexdigest(), 16)
                 partition_idx = hash_val % num_reducers
-                partitions[partition_idx].append(item)
+                
+                # Write to temp file
+                if not first_item[partition_idx]:
+                    temp_files[partition_idx].write(",\n")
+                first_item[partition_idx] = False
+                
+                # Dump just this single item
+                temp_files[partition_idx].write(json.dumps(item))
+                
+            # Aggressively free memory
+            del data
+            del raw_bytes
                 
         except Exception as e:
             print(f"Error shuffling reference {ref}: {e}")
@@ -201,11 +246,19 @@ def shuffle_intermediate_results(job_id: str, intermediate_refs: list, num_reduc
     bucket_name = "mapreduce-intermediates"
     partition_refs = []
     
-    for i, partition_data in enumerate(partitions):
-        # Even if a partition is empty, we create an empty list so the reducer doesn't fail
-        combined_bytes = json.dumps(partition_data).encode("utf-8")
+    for i, tf in enumerate(temp_files):
+        tf.write("\n]") # Close JSON array
+        tf.close()
+        
+        # Upload the temp file
         object_name = f"job-{job_id}/shuffled_output_{i}.json"
-        ref = upload_data_bytes(bucket_name, object_name, combined_bytes)
+        
+        with open(tf.name, 'rb') as f:
+            ref = upload_data_bytes(bucket_name, object_name, f.read())
+            
         partition_refs.append(ref)
+        
+        # Clean up temp file
+        os.unlink(tf.name)
     
     return partition_refs
