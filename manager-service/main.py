@@ -152,7 +152,8 @@ def create_worker_pod(task: schemas.TaskResponse, job: schemas.JobResponse):
     # Define the Job specification 
     job_spec = client.V1JobSpec(
         template=template,
-        backoff_limit=3  # Fault tolerance: retry 3 times if it crashes 
+        backoff_limit=3,  # Fault tolerance: retry 3 times if it crashes 
+        ttl_seconds_after_finished=90 # Auto-delete the K8s Job 90 seconds after completion
     )
 
     # Create the final Job object
