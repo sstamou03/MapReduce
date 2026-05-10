@@ -82,11 +82,13 @@ class TestManagerOrchestration(unittest.TestCase):
         mock_get_job.return_value = mock_job
         mock_split.return_value = ["ref0", "ref1", "ref2"]
         
-        # Mock task creation to return valid objects for pod naming
+       
+# Mock task creation to return valid objects for pod naming
         def side_effect_create_task(*args, **kwargs):
             task = MagicMock()
             task.task_id = uuid.uuid4()
-            task.task_type = "MAP"
+            # FIX: Use the Enum instead of a raw string "MAP"
+            task.task_type = db.TaskType.MAP 
             task.input_partition_ref = kwargs.get('input_partition_ref', "ref")
             return task
         mock_create_task.side_effect = side_effect_create_task
@@ -194,6 +196,61 @@ class TestManagerOrchestration(unittest.TestCase):
         self.assertEqual(mock_pod.call_count, 5)
 
         print("[OK] Custom num_mappers test: 5 mappers created instead of default 3.")
+
+        # --- TEST: PHASE PROGRESSION (MAP -> REDUCE) ---
+    @patch("database.storage.shuffle_intermediate_results")
+    @patch("database.crud.get_tasks_for_job")
+    @patch("database.crud.get_job")
+    @patch("main.create_worker_pod")
+    @patch("database.crud.create_task")
+    def test_transition_to_reduce_phase(self, mock_create_task, mock_pod, mock_get_job, mock_get_tasks, mock_shuffle):
+        """
+        Verifies that when the last Mapper completes, the Manager 
+        automatically triggers Shuffle and spawns Reducers [cite: 130-132].
+        """
+        from main import handle_phase_progression
+        
+        # Setup: All tasks are COMPLETED Mappers
+        task_mock = MagicMock(status=db.TaskStatus.COMPLETED, task_type=db.TaskType.MAP, output_partition_ref="ref")
+        mock_get_tasks.return_value = [task_mock]
+        mock_get_job.return_value = MagicMock(num_reducers=1)
+        mock_shuffle.return_value = ["shuffled_ref_1"]
+        mock_create_task.return_value = MagicMock(task_id=uuid.uuid4(), task_type=db.TaskType.REDUCE)
+
+        # Run logic
+        import asyncio
+        asyncio.run(handle_phase_progression(self.db_session, str(self.job_id)))
+
+        # Assertions
+        mock_shuffle.assert_called_once() # Ensure Shuffle was triggered
+        mock_create_task.assert_called()   # Ensure Reducer task created in DB
+        self.assertEqual(mock_pod.call_count, 1) # Ensure Reducer pod spawned in K8s
+
+    # --- TEST: RECOVERY LOGIC (SELF-HEALING) ---
+    @patch("main.create_worker_pod")
+    @patch("database.crud.get_job")
+    @patch("main.TaskStateController.process_update")
+    def test_handle_task_recovery(self, mock_process_update, mock_get_job, mock_pod):
+        """
+        Verifies that handle_task_recovery sets state to RETRYING 
+        and re-spawns a K8s worker [cite: 179-181].
+        """
+        from main import handle_task_recovery
+        
+        # Setup a mock task that "failed"
+        mock_task = MagicMock(task_id=uuid.uuid4(), job_id=self.job_id)
+        mock_process_update.return_value = mock_task # Simulate successful state update
+        
+        # Run recovery logic
+        import asyncio
+        asyncio.run(handle_task_recovery(self.db_session, mock_task))
+
+        # Check: Did it transition to RETRYING?
+        mock_process_update.assert_any_call(self.db_session, str(mock_task.task_id), db.TaskStatus.RETRYING)
+        
+        # Check: Did it spawn a NEW pod?
+        mock_pod.assert_called_once()
+        print("[OK] Recovery Test: Self-healing pod re-spawning verified.")
 
 if __name__ == "__main__":
     unittest.main()

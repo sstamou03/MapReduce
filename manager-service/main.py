@@ -36,6 +36,14 @@ class TaskStateController:
             logger.error(f"Task {task_id} not found.")
             return None
 
+        # Convert string to Enum if necessary
+        if isinstance(new_status, str):
+            try:
+                new_status = db.TaskStatus(new_status)
+            except ValueError:
+                logger.error(f"Invalid status string: {new_status}")
+                return None
+
         # This logic implements the Fault Tolerance requirement for retries 
         if new_status not in TaskStateController.ALLOWED_TRANSITIONS.get(task.status, []):
             logger.warning(f"Illegal transition: {task.status} -> {new_status}")
@@ -62,6 +70,44 @@ except Exception as e:
     logger.warning(f"[!] K8s client not ready (ignore if Minikube isn't running yet): {e}")
     k8s_batch_v1 = None
 
+@app.on_event("startup")
+async def startup_event():
+    import asyncio
+    
+    logger.info("[*] Starting Manager Service. Running Recovery Protocol...")
+    hostname = os.environ.get("HOSTNAME", "mapreduce-manager-0")
+    try:
+        replica_idx = int(hostname.split("-")[-1])
+    except ValueError:
+        replica_idx = 0
+    manager_replicas = int(os.environ.get("MANAGER_REPLICAS", "3"))
+
+    logger.info(f"[*] This is Manager Replica {replica_idx} out of {manager_replicas}.")
+
+    async def recover_state():
+        from database.db import SessionLocal
+        db_session = SessionLocal()
+        try:
+            all_jobs = crud.get_all_jobs(db_session)
+            for job in all_jobs:
+                if job.status in [db.JobStatus.SUBMITTED, db.JobStatus.RUNNING]:
+                    job_hash = int(str(job.job_id).replace("-", ""), 16) % manager_replicas
+                    if job_hash == replica_idx:
+                        logger.info(f"[+] Recovering assigned job {job.job_id} (Status: {job.status})")
+                        if job.status == db.JobStatus.SUBMITTED:
+                            # Start orchestration in a background thread
+                            asyncio.create_task(asyncio.to_thread(start_job_orchestration, job.job_id, db_session))
+                        elif job.status == db.JobStatus.RUNNING:
+                            # Re-check phase progression just in case it was interrupted
+                            await handle_phase_progression(db_session, str(job.job_id))
+        except Exception as e:
+            logger.error(f"[-] Recovery failed: {e}")
+        finally:
+            db_session.close()
+
+    asyncio.create_task(recover_state())
+    asyncio.create_task(run_reconciliation())
+
 def create_worker_pod(task: schemas.TaskResponse, job: schemas.JobResponse):
     """
     Translates a DB Task into a Kubernetes Job.
@@ -82,14 +128,20 @@ def create_worker_pod(task: schemas.TaskResponse, job: schemas.JobResponse):
             # FIX: Also ensure these refs are strings if they come from an Enum
             value=str(job.mapper_code_ref) if task.task_type.value == "MAP" else str(job.reducer_code_ref)
         ),
-        client.V1EnvVar(name="MANAGER_URL", value="http://manager-service:8000"),
+        # Inject this specific manager replica's hostname so the worker reports back directly to us
+        client.V1EnvVar(name="MANAGER_URL", value=f"http://{os.environ.get('HOSTNAME', 'manager-service')}.manager-service.default.svc.cluster.local:8000"),
     ]
 
     # Define the container using our worker image 
     container = client.V1Container(
         name="worker",
         image="worker-service:latest", 
-        env=env_vars
+        image_pull_policy="Never",
+        env=env_vars,
+        env_from=[
+            client.V1EnvFromSource(config_map_ref=client.V1ConfigMapEnvSource(name="mapreduce-config")),
+            client.V1EnvFromSource(secret_ref=client.V1SecretEnvSource(name="mapreduce-secrets"))
+        ]
     )
 
     # Define the Pod template 
@@ -187,7 +239,14 @@ async def handle_phase_progression(db_session: Session, job_id: str):
             num_reducers = job.num_reducers or 1
             intermediate_refs = [t.output_partition_ref for t in mappers if t.output_partition_ref]
             
-            shuffled_refs = storage.shuffle_intermediate_results(job_id, intermediate_refs, num_reducers)
+            # Run the heavy, synchronous shuffle operation in a background thread to prevent blocking FastAPI health checks
+            import asyncio
+            shuffled_refs = await asyncio.to_thread(
+                storage.shuffle_intermediate_results, 
+                job_id, 
+                intermediate_refs, 
+                num_reducers
+            )
             logger.info(f"[✓] Shuffle complete. {len(shuffled_refs)} partitions generated.")
 
             # REDUCE - Create tasks and spawn K8s Jobs [cite: 131-132]
@@ -207,34 +266,79 @@ async def handle_phase_progression(db_session: Session, job_id: str):
     elif reducers and all(r.status == db.TaskStatus.COMPLETED for r in reducers):
         logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
         crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
-        crud.update_job_output_ref(db_session, job_id, f"mapreduce-outputs/job-{job_id}/")
+        
+        # Get the final output reference from the Reducer task
+        final_output_ref = reducers[0].output_partition_ref if reducers[0].output_partition_ref else f"mapreduce-outputs/job-{job_id}/result.json"
+        crud.update_job_output_ref(db_session, job_id, final_output_ref)
 
-async def run_reconciliation(db_session: Session):
+async def run_reconciliation():
     """
     Continuously monitors K8s to ensure pods haven't vanished[cite: 177, 243].
     """
+    hostname = os.environ.get("HOSTNAME", "mapreduce-manager-0")
+    try:
+        replica_idx = int(hostname.split("-")[-1])
+    except ValueError:
+        replica_idx = 0
+    manager_replicas = int(os.environ.get("MANAGER_REPLICAS", "3"))
+
     while True:
+        from database.db import SessionLocal
+        db_session = SessionLocal()
         try:
             # We fetch all tasks that our DDS says are 'RUNNING' 
             running_tasks = crud.get_all_running_tasks(db_session)
             for task in running_tasks:
+                # IMPORTANT: Only reconcile tasks that belong to jobs assigned to THIS replica!
+                job_hash = int(str(task.job_id).replace("-", ""), 16) % manager_replicas
+                if job_hash != replica_idx:
+                    continue
+                    
                 pod_name = f"worker-{task.task_id}"
                 try:
-                    # Query K8s Batch API for the specific Job state 
-                    k8s_job = k8s_batch_v1.read_namespaced_job(pod_name, "default")
-                    
-                    # If K8s says it failed, we trigger the recovery use case 
-                    if k8s_job.status.failed:
-                        logger.warning(f"Self-Healing: Task {task.task_id} failed in K8s. Re-scheduling...")
-                        # This is where we would call your new retry logic
+                    if k8s_batch_v1:
+                        # Query K8s Batch API for the specific Job state 
+                        k8s_job = k8s_batch_v1.read_namespaced_job(pod_name, "default")
+                        
+                        # If K8s says it failed, we trigger the recovery use case 
+                        if k8s_job.status.failed:
+                            logger.warning(f"Self-Healing: Task {task.task_id} failed in K8s. Re-scheduling...")
+                            await handle_task_recovery(db_session, task)
                 except Exception as e:
                     # If 404, the pod was manually deleted 
                     logger.error(f"Self-Healing: Pod {pod_name} is missing! Recovering...")
+                    await handle_task_recovery(db_session, task)
             
-            await asyncio.sleep(5) # Check every 5 seconds
         except Exception as e:
             logger.error(f"Watchdog Error: {e}")
-            await asyncio.sleep(5)
+        finally:
+            db_session.close()
+            
+        await asyncio.sleep(20) # Check every 20 seconds
+
+async def handle_task_recovery(db_session: Session, task):
+    """
+    Implementation of worker failure recovery [cite: 175-185].
+    """
+    # 0. Delete the failed K8s Job so we can re-create it with the same name
+    try:
+        if k8s_batch_v1:
+            k8s_batch_v1.delete_namespaced_job(
+                name=f"worker-{task.task_id}",
+                namespace="default",
+                body=client.V1DeleteOptions(propagation_policy="Background")
+            )
+    except Exception:
+        pass # Ignore if already deleted
+        
+    # 1. Update state to RETRYING in DDS [cite: 179]
+    updated_task = TaskStateController.process_update(db_session, str(task.task_id), db.TaskStatus.RETRYING)
+    
+    if updated_task:
+        job = crud.get_job(db_session, str(task.job_id))
+        # 2. Re-launch the K8s Job [cite: 181]
+        create_worker_pod(updated_task, job)
+        logger.info(f"[✓] Successfully re-launched worker for task {task.task_id}")
 
 @app.post("/manager/jobs")
 def trigger_job(

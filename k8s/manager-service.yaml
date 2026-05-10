@@ -1,0 +1,87 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: manager-service-account
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-service-role
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manager-service-rolebinding
+subjects:
+  - kind: ServiceAccount
+    name: manager-service-account
+roleRef:
+  kind: Role
+  name: manager-service-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: manager-service
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+  clusterIP: None
+  selector:
+    app: mapreduce-manager
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mapreduce-manager
+spec:
+  serviceName: "manager-service"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mapreduce-manager
+  template:
+    metadata:
+      labels:
+        app: mapreduce-manager
+    spec:
+      serviceAccountName: manager-service-account
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command: ['sh', '-c', "until nc -z mapreduce-postgres 5432; do echo waiting for postgres; sleep 2; done"]
+        - name: wait-for-minio
+          image: busybox:1.36
+          command: ['sh', '-c', "until nc -z mapreduce-minio 9000; do echo waiting for minio; sleep 2; done"]
+      containers:
+        - name: mapreduce-manager
+          image: mapreduce-manager:latest
+          imagePullPolicy: Never # Adjust if using an external registry
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: mapreduce-config
+            - secretRef:
+                name: mapreduce-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10

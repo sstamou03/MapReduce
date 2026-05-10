@@ -7,7 +7,7 @@ import importlib.util
 import requests
 from unittest.mock import MagicMock
 sys.modules['psycopg2'] = MagicMock()
-from database.storage import download_file, get_data_from_ref, upload_intermediate_result, upload_data_bytes
+from database.storage import download_file, get_data_from_ref, upload_intermediate_result, upload_data_bytes, upload_final_result
 
 # The Manager's base URL — configurable via env var, defaults to K8s service name
 MANAGER_URL = os.getenv("MANAGER_URL", "http://manager-service:8000")
@@ -116,7 +116,10 @@ def main():
 
         # Upload results back to MinIO
         result_bytes = json.dumps(result).encode("utf-8")
-        output_ref = upload_intermediate_result(job_id, task_id, result_bytes)
+        if task_type.upper() == "MAP":
+            output_ref = upload_intermediate_result(job_id, task_id, result_bytes)
+        else:
+            output_ref = upload_final_result(job_id, result_bytes)
         print(f"[*] Result uploaded to {output_ref}")
 
         # Tell the Manager we are done

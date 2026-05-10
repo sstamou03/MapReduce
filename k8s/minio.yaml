@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mapreduce-minio
+spec:
+  ports:
+    - name: api
+      port: 9000
+    - name: console
+      port: 9001
+  selector:
+    app: mapreduce-minio
+  clusterIP: None # Headless service for StatefulSet
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mapreduce-minio-console
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 9001
+      targetPort: 9001
+  selector:
+    app: mapreduce-minio
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mapreduce-minio
+spec:
+  serviceName: "mapreduce-minio"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mapreduce-minio
+  template:
+    metadata:
+      labels:
+        app: mapreduce-minio
+    spec:
+      containers:
+        - name: mapreduce-minio
+          image: minio/minio
+          args: ["server", "/data", "--console-address", ":9001"]
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          envFrom:
+            - secretRef:
+                name: mapreduce-secrets
+          volumeMounts:
+            - name: miniodata
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: miniodata
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        resources:
+          requests:
+            storage: 2Gi
