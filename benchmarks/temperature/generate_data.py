@@ -6,7 +6,7 @@ import random
 import os
 
 OUTPUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "input_data.csv")
-TARGET_SIZE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+TARGET_SIZE_BYTES = 200 * 1024 * 1024  # 200 MB
 
 regions = ["Athens", "Thessaloniki", "Heraklion", "Patras", "Larissa",
            "Volos", "Ioannina", "Kavala", "Chania", "Alexandroupoli",

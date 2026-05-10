@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from typing import List
 import uuid
 import sys
+import os
 import asyncio
 
 import httpx
@@ -43,7 +44,8 @@ KEYCLOAK_PUBLIC_KEY : str = ""
 async def lifespan(app: FastAPI):
     # --- STARTUP: Fetch Key from Keycloak ---
     global KEYCLOAK_PUBLIC_KEY
-    realm_url = "http://mapreduce-keycloak:8080/realms/MapReduce-Realm"
+    keycloak_internal_url = os.environ.get("KEYCLOAK_INTERNAL_URL", "http://mapreduce-keycloak:8080")
+    realm_url = f"{keycloak_internal_url}/realms/MapReduce-Realm"
     
     max_retries = 10
     retry_delay = 4  # seconds
@@ -76,9 +78,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
+@app.get("/healthz", tags=["System"])
+def health_check():
+    """
+    Readiness and Liveness probe for Kubernetes.
+    Returns 200 OK only if Keycloak's public key has been successfully fetched.
+    """
+    if not KEYCLOAK_PUBLIC_KEY:
+        raise HTTPException(status_code=503, detail="Service not ready: Keycloak public key missing.")
+    return {"status": "ok"}
 # now this tells fastAPI where to search for a token
+keycloak_external_url = os.environ.get("KEYCLOAK_EXTERNAL_URL", "http://localhost:8080")
 oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="http://localhost:8080/realms/MapReduce-Realm/protocol/openid-connect/token"
+    tokenUrl=f"{keycloak_external_url}/realms/MapReduce-Realm/protocol/openid-connect/token"
 )
 
 """====================================================== 
@@ -211,14 +223,21 @@ async def submit_job(
 
         # Forward the job to the Manager service so it can start orchestration
         try:
+            manager_replicas = int(os.environ.get("MANAGER_REPLICAS", "1"))
+            # Hash the UUID to pick a specific replica (e.g. mapreduce-manager-0, mapreduce-manager-1, etc.)
+            replica_idx = int(str(new_job.job_id).replace("-", ""), 16) % manager_replicas
+            
+            # The manager-service is a Headless Service, so we can route directly to the specific pod DNS
+            manager_url = f"http://mapreduce-manager-{replica_idx}.manager-service.default.svc.cluster.local:8000"
+            
             async with httpx.AsyncClient() as client:
                 manager_response = await client.post(
-                    "http://manager-service:8000/manager/jobs",
+                    f"{manager_url}/manager/jobs",
                     json={"job_id": str(new_job.job_id)},
                     timeout=10.0
                 )
                 manager_response.raise_for_status()
-                logger.info(f"Manager accepted job {new_job.job_id} for orchestration.")
+                logger.info(f"Manager replica {replica_idx} accepted job {new_job.job_id} for orchestration.")
         except Exception as mgr_err:
             logger.warning(f"Manager notification failed for job {new_job.job_id}: {mgr_err}. Job is saved but not yet orchestrated.")
 
@@ -282,11 +301,15 @@ async def abort_job(
         raise HTTPException(status_code=404, detail="Job not found")
 
     if job.status in ["SUBMITTED", "RUNNING"]:
-        # Send abort request to Manager — this kills K8s pods and marks tasks as FAILED
+        # Send abort request to the specific Manager replica handling this job
         try:
+            manager_replicas = int(os.environ.get("MANAGER_REPLICAS", "1"))
+            replica_idx = int(str(job_id).replace("-", ""), 16) % manager_replicas
+            manager_url = f"http://mapreduce-manager-{replica_idx}.manager-service.default.svc.cluster.local:8000"
+            
             async with httpx.AsyncClient() as client:
                 abort_response = await client.delete(
-                    f"http://manager-service:8000/manager/jobs/{job_id}",
+                    f"{manager_url}/manager/jobs/{job_id}",
                     timeout=10.0
                 )
                 abort_response.raise_for_status()

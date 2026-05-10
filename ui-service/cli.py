@@ -7,8 +7,10 @@ import argparse #this will be used to parse the CLI arguments
 import datetime
 from typing import Optional
 
-API_BASE_URL = "http://localhost:8000"
-KEYCLOAK_URL = "http://localhost:8080/realms/MapReduce-Realm/protocol/openid-connect/token"
+# Default to localhost if not provided, allowing users to override via environment variables when using K8s
+API_BASE_URL = os.environ.get("UI_SERVICE_URL", "http://localhost:8000")
+keycloak_base = os.environ.get("KEYCLOAK_EXTERNAL_URL", "http://localhost:8080")
+KEYCLOAK_URL = f"{keycloak_base}/realms/MapReduce-Realm/protocol/openid-connect/token"
 CLIENT_ID = "ui-service" 
 TOKEN_FILE = ".frappe_tokens" # we will store the user's JWT issued from keycloak, in a local file
 
