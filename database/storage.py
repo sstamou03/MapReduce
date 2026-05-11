@@ -61,12 +61,16 @@ def upload_intermediate_result(job_id: str, task_id: str, data: bytes) -> str:
     object_name = f"job-{job_id}/task-{task_id}_output"
     return upload_data_bytes(bucket_name, object_name, data)
 
-def upload_final_result(job_id: str, data: bytes) -> str:
+def upload_final_result(job_id: str, task_id: str = None, data: bytes = b"") -> str:
     """
-    Uploads the final reduced output to MinIO.
+    Uploads the final reduced output to MinIO. 
+    If task_id is provided, saves as a shard. Otherwise, saves as the final result.json.
     """
     bucket_name = "mapreduce-outputs"
-    object_name = f"job-{job_id}/result.json"
+    if task_id:
+        object_name = f"job-{job_id}/result_shard_{task_id}.json"
+    else:
+        object_name = f"job-{job_id}/result.json"
     return upload_data_bytes(bucket_name, object_name, data)
 
 def download_file(bucket_name: str, object_name: str, file_path: str):
@@ -262,3 +266,34 @@ def shuffle_intermediate_results(job_id: str, intermediate_refs: list, num_reduc
         os.unlink(tf.name)
     
     return partition_refs
+
+def merge_final_results(job_id: str, reducer_refs: list) -> str:
+    """
+    Downloads all final JSON dictionaries from Reducers and merges them into
+    a single result.json.
+    """
+    print(f"[*] Starting merge for Job {job_id}. Found {len(reducer_refs)} shards.")
+    merged_results = {}
+    for i, ref in enumerate(reducer_refs):
+        try:
+            print(f"  [>] Downloading shard {i}: {ref}")
+            raw_bytes = get_data_from_ref(ref)
+            data = json.loads(raw_bytes.decode("utf-8"))
+            
+            if isinstance(data, dict):
+                print(f"    [+] Shard {i} contains {len(data)} keys.")
+                merged_results.update(data)
+            elif isinstance(data, list):
+                if not isinstance(merged_results, list):
+                    merged_results = []
+                print(f"    [+] Shard {i} contains {len(data)} items.")
+                merged_results.extend(data)
+        except Exception as e:
+            print(f"    [X] Error merging shard {ref}: {e}")
+            
+    if isinstance(merged_results, dict):
+        merged_results = {k: merged_results[k] for k in sorted(merged_results.keys())}
+        
+    print(f"[*] Merge complete. Total keys/items: {len(merged_results)}")
+    final_data = json.dumps(merged_results, indent=4).encode("utf-8")
+    return upload_final_result(job_id, data=final_data)

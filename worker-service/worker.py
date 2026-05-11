@@ -119,7 +119,7 @@ def main():
         if task_type.upper() == "MAP":
             output_ref = upload_intermediate_result(job_id, task_id, result_bytes)
         else:
-            output_ref = upload_final_result(job_id, result_bytes)
+            output_ref = upload_final_result(job_id, task_id, result_bytes)
         print(f"[*] Result uploaded to {output_ref}")
 
         # Tell the Manager we are done

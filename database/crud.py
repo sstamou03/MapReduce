@@ -168,3 +168,10 @@ def delete_user_jobs(db: Session, user_id: str) -> int:
         count += 1
         
     return count
+
+def get_all_running_tasks(db: Session):
+    """
+    Returns all tasks in the system that are currently in the RUNNING status.
+    Used by the Watchdog for reconciliation.
+    """
+    return db.query(Task).filter(Task.status == TaskStatus.RUNNING).all()

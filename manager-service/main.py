@@ -218,29 +218,42 @@ def start_job_orchestration(job_id: uuid.UUID, db_session: Session):
 
 async def handle_phase_progression(db_session: Session, job_id: str):
     """
-    Orchestrates the transition between Map, Shuffle, and Reduce phases.
-    Ensures all tasks of a phase are COMPLETED before starting the next [cite: 130-131].
+    Core state machine logic for MapReduce. [cite: 131]
+    Checks task statuses and transitions the job between phases.
     """
     job = crud.get_job(db_session, job_id)
-    if not job:
-        logger.error(f"Job {job_id} not found during phase check.")
+    if not job or job.status in [db.JobStatus.COMPLETED, db.JobStatus.FAILED]:
         return
 
-    # 1. Fetch all current tasks for this job 
     all_tasks = crud.get_tasks_for_job(db_session, job_id)
     mappers = [t for t in all_tasks if t.task_type == db.TaskType.MAP]
     reducers = [t for t in all_tasks if t.task_type == db.TaskType.REDUCE]
 
-    # 2. Transition from MAP to REDUCE [cite: 131]
+    # 1. FINAL COMPLETION (Check Reducers FIRST)
+    if reducers and all(r.status == db.TaskStatus.COMPLETED for r in reducers):
+        logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
+        try:
+            # Aggregate all reducer outputs into one final result.json
+            reducer_refs = [r.output_partition_ref for r in reducers if r.output_partition_ref]
+            import asyncio
+            final_output_ref = await asyncio.to_thread(storage.merge_final_results, job_id, reducer_refs)
+            crud.update_job_output_ref(db_session, job_id, final_output_ref)
+            logger.info(f"[✓] Final merged result uploaded to {final_output_ref}")
+        except Exception as merge_err:
+            logger.error(f"[X] Failed to merge final results for {job_id}: {merge_err}")
+
+        crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
+        return
+
+    # 2. Transition from MAP to REDUCE [cite: 131-132]
     if mappers and all(m.status == db.TaskStatus.COMPLETED for m in mappers) and not reducers:
         logger.info(f"--- [PHASE TRANSITION] Job {job_id}: Mappers finished. Starting Shuffle. ---")
         
         try:
-            # SHUFFLE - Aggregate intermediate outputs [cite: 132]
+            # SHUFFLE - Aggregate intermediate outputs
             num_reducers = job.num_reducers or 1
             intermediate_refs = [t.output_partition_ref for t in mappers if t.output_partition_ref]
             
-            # Run the heavy, synchronous shuffle operation in a background thread to prevent blocking FastAPI health checks
             import asyncio
             shuffled_refs = await asyncio.to_thread(
                 storage.shuffle_intermediate_results, 
@@ -250,7 +263,7 @@ async def handle_phase_progression(db_session: Session, job_id: str):
             )
             logger.info(f"[✓] Shuffle complete. {len(shuffled_refs)} partitions generated.")
 
-            # REDUCE - Create tasks and spawn K8s Jobs [cite: 131-132]
+            # REDUCE - Create tasks and spawn K8s Jobs
             for ref in shuffled_refs:
                 reducer_task = crud.create_task(
                     db=db_session, job_id=job_id,
@@ -262,15 +275,6 @@ async def handle_phase_progression(db_session: Session, job_id: str):
         except Exception as e:
             logger.error(f"[X] Shuffle/Reduce failed for {job_id}: {e}")
             crud.update_job_status(db_session, job_id, db.JobStatus.FAILED)
-
-    # 3. FINAL COMPLETION [cite: 133]
-    elif reducers and all(r.status == db.TaskStatus.COMPLETED for r in reducers):
-        logger.info(f"--- [!!!] JOB {job_id} FULLY COMPLETED [!!!] ---")
-        crud.update_job_status(db_session, job_id, db.JobStatus.COMPLETED)
-        
-        # Get the final output reference from the Reducer task
-        final_output_ref = reducers[0].output_partition_ref if reducers[0].output_partition_ref else f"mapreduce-outputs/job-{job_id}/result.json"
-        crud.update_job_output_ref(db_session, job_id, final_output_ref)
 
 async def run_reconciliation():
     """
