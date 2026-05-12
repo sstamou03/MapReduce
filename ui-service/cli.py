@@ -485,8 +485,12 @@ def get_results(job_id: str):
             print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
         elif response.status_code == 404:
             print(f"\033[91m[Error 404 - Not Found]. Job {job_id} or its results were not found.\033[0m")
+        elif response.status_code == 403:
+            print(f"\033[91m[Error 403 - Forbidden]. You're not authorized to access this.\033[0m")
         elif response.status_code == 400:
             print(f"\033[91m[Error 400 - Bad Request]. {response.json().get('detail')}\033[0m")
+        elif response.status_code == 422:
+            print(f"\033[91m[Error 422 - Client Error]. This Job ID isn't valid.\033[0m")
         else:
             print(f"\033[91mFailed to fetch results: {e}\033[0m")
         return None
