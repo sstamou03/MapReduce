@@ -1,0 +1,287 @@
+:root {
+    --bg-app: #f5f5f7; /* Apple light background */
+    --sidebar-bg: #ffffff;
+    --accent: #0071e3; /* Apple classic blue */
+    --text-main: #1d1d1f;
+    --text-sub: #86868b;
+    --border: rgba(0, 0, 0, 0.08);
+    --card-bg: #ffffff;
+    --shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+/* Dark Mode Overrides (Apple Dark Style) */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-app: #000000;
+        --sidebar-bg: #1c1c1e;
+        --accent: #0a84ff;
+        --text-main: #f5f5f7;
+        --text-sub: #86868b;
+        --border: rgba(255, 255, 255, 0.1);
+        --card-bg: #2c2c2e;
+        --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-font-smoothing: antialiased;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: var(--bg-app);
+    color: var(--text-main);
+    letter-spacing: -0.01em;
+}
+
+.app-container {
+    display: flex;
+    height: 100vh;
+}
+
+/* Minimal Sidebar */
+.sidebar {
+    width: 250px;
+    background-color: var(--sidebar-bg);
+    border-right: 1px solid var(--border);
+    padding: 32px 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Sidebar Footer */
+.sidebar-footer {
+    margin-top: auto;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+}
+
+.status-badge {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-sub);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.status-badge.online { color: #34c759; }
+.status-badge.offline { color: #ff3b30; }
+
+.logo {
+    font-weight: 700;
+    font-size: 18px;
+    margin-bottom: 40px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-main);
+}
+
+.nav-section {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-sub);
+    margin: 24px 0 12px 12px;
+    letter-spacing: 0.05em;
+}
+
+.action-btn {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-main);
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.action-btn:hover {
+    background: rgba(0, 0, 0, 0.03);
+}
+
+.action-btn:active {
+    transform: scale(0.96);
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* For port buttons that should stay highlighted when active */
+.action-btn.mini.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+
+.infra-btn, .deploy-btn, .build-btn {
+    border: 1px solid var(--border);
+    margin-bottom: 6px;
+}
+
+/* Main Layout */
+.header-main {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.tabs {
+    display: flex;
+    gap: 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    padding-bottom: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-sub);
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s ease;
+}
+
+.tab-btn.active {
+    color: var(--text-main);
+}
+
+.tab-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background-color: var(--accent);
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
+.main-content {
+    flex: 1;
+    padding: 40px 60px;
+    overflow-y: auto;
+}
+
+.header h1 {
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.subtitle {
+    color: var(--text-sub);
+    font-size: 16px;
+    margin-bottom: 40px;
+}
+
+/* Status Cards */
+.pods-container {
+    margin-bottom: 48px;
+}
+
+/* Pods Table Styling */
+.pods-table {
+    background: var(--card-bg);
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.table-header {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+    padding: 14px 24px;
+    background: rgba(0, 0, 0, 0.02);
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-sub);
+    letter-spacing: 0.05em;
+}
+
+.pod-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    font-size: 13px;
+    transition: background 0.2s ease;
+}
+
+.pod-row:last-child { border-bottom: none; }
+.pod-row:hover { background: rgba(0, 0, 0, 0.01); }
+
+.col-name { font-weight: 600; color: var(--text-main); }
+.col-ready { font-family: 'SF Mono', monospace; font-size: 12px; }
+.col-restarts { color: var(--text-sub); }
+.col-age { color: var(--text-sub); }
+
+.status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.dot-running { background-color: #34c759; box-shadow: 0 0 8px rgba(52, 199, 89, 0.4); }
+.dot-pending { background-color: #ff9500; }
+.dot-error { background-color: #ff3b30; }
+
+.spinner {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+/* Minimal Console */
+.console-section {
+    background: var(--card-bg);
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.console-header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.console-output {
+    height: 250px;
+    padding: 20px;
+    font-family: 'SF Mono', 'JetBrains Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-y: auto;
+    color: var(--text-main);
+}
