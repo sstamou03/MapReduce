@@ -7,12 +7,13 @@ import uuid
 import sys
 import os
 import asyncio
+import json
 
 import httpx
 from contextlib import asynccontextmanager
 
 from database import schemas, crud, storage
-from database.db import get_db
+from database.db import get_db, JobStatus
 
 # we configure logging to see it in terminal
 import logging
@@ -281,6 +282,51 @@ async def get_job(
         logger.warning(f"User {user_id} tried to access job {job_id} that is not theirs.")
         raise HTTPException(status_code=403, detail="This job is not yours!")
     return job    
+
+@app.get("/test", tags=["System"])
+def test_route():
+    logger.info("Test route hit!")
+    return {"message": "Test OK"}
+
+@app.get("/results/{job_id}", tags=["Jobs"])
+async def get_job_results_new(
+    job_id: uuid.UUID,
+    user_data: dict = Depends(get_current_user_id),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch the final results of a completed job from MinIO.
+    """
+    user_id = user_data.get('user_id')
+    logger.info(f"User {user_id} requested results for job {job_id}.")
+    
+    job = crud.get_job(db, job_id=job_id)
+
+    if not job:
+        logger.warning(f"Job {job_id} not found during results request.")
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.user_id != user_id and not is_admin(user_data):
+        logger.warning(f"User {user_id} tried to access results for job {job_id} that is not theirs.")
+        raise HTTPException(status_code=403, detail="This job is not yours!")
+
+    if job.status != JobStatus.COMPLETED:
+        logger.warning(f"Results requested for job {job_id} with status {job.status}.")
+        raise HTTPException(status_code=400, detail=f"Job status is {job.status}. Results are only available for COMPLETED jobs.")
+
+    if not job.output_code_ref:
+        logger.warning(f"No output_code_ref found for job {job_id}.")
+        raise HTTPException(status_code=404, detail="Result reference not found in database.")
+
+    logger.info(f"Fetching results from MinIO for job {job_id} using ref: {job.output_code_ref}")
+
+    try:
+        # Fetch data from MinIO
+        result_bytes = storage.get_data_from_ref(job.output_code_ref)
+        return json.loads(result_bytes.decode("utf-8"))
+    except Exception as e:
+        logger.error(f"Error fetching results for job {job_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch results from storage.")
 
 ### (TODO) : Send the request to manager service to cancel job if it is running
 @app.delete("/jobs/{job_id}", tags=["Jobs"])

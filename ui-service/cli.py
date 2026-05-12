@@ -54,12 +54,14 @@ def login_keycloak() -> Optional[str]:
         'username': username,
         'password': password,
         'grant_type': 'password',
-        'scope' : 'openid profile email'
+        'scope' : 'openid'
     }
 
     try:
         response = requests.post(KEYCLOAK_URL, data=payload)
-        response.raise_for_status() #this will raise exception if the response status is 4xx or 5xx (error)
+        if response.status_code != 200:
+            print(f"\033[91mKeycloak Error ({response.status_code}): {response.text}\033[0m")
+        response.raise_for_status() 
 
         data = response.json() #this is the entire response, it will contain many fields, such as the token, expiration time, refresh token, etc
         # uncomment to see the entire resposne
@@ -326,6 +328,168 @@ def delete_user(user_id: str):
         else:
             print(f"\033[91mFailed to delete user data: {e}\033[0m")
         return None
+
+# -- get job results : GET /jobs/{job_id}/results
+def _print_results_table(job_id: str, results: dict):
+    """Render results as a styled terminal table with color gradient for temperature."""
+    # ANSI colors
+    RESET   = "\033[0m"
+    BOLD    = "\033[1m"
+    CYAN    = "\033[1;36m"
+    WHITE   = "\033[1;37m"
+    YELLOW  = "\033[1;33m"
+    GREEN   = "\033[1;32m"
+    BLUE    = "\033[1;34m"
+    DIM     = "\033[2m"
+    HEADER_BG = "\033[48;5;236m"
+
+    # Detect result format: {year: {mean_temperature, measurements}} or {key: value}
+    is_temp_format = (
+        results and
+        isinstance(next(iter(results.values())), dict) and
+        "mean_temperature" in next(iter(results.values()))
+    )
+
+    if is_temp_format:
+        all_temps = [v["mean_temperature"] for v in results.values()]
+        min_t = min(all_temps)
+        max_t = max(all_temps)
+
+        def temp_bar(t, width=12):
+            if max_t == min_t:
+                filled = width
+            else:
+                filled = int(((t - min_t) / (max_t - min_t)) * width)
+            return "█" * filled + "░" * (width - filled)
+
+        col_w = [6, 18, 14]
+        top   = f"╔{'═'*(col_w[0]+2)}╦{'═'*(col_w[1]+2)}╦{'═'*(col_w[2]+2)}╗"
+        hdr   = f"╠{'═'*(col_w[0]+2)}╬{'═'*(col_w[1]+2)}╬{'═'*(col_w[2]+2)}╣"
+        mid   = f"╠{'═'*(col_w[0]+2)}╬{'═'*(col_w[1]+2)}╬{'═'*(col_w[2]+2)}╣"
+        bot   = f"╚{'═'*(col_w[0]+2)}╩{'═'*(col_w[1]+2)}╩{'═'*(col_w[2]+2)}╝"
+
+        print(f"\n{CYAN}{BOLD}  [TEMP]  Temperature Benchmark Results -- Job {job_id[:8]}...{RESET}\n")
+        print(f"{CYAN}{top}{RESET}")
+        print(
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{'Year':^{col_w[0]}}{RESET} "
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{'Mean Temp (°C)':^{col_w[1]}}{RESET} "
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{'Samples':^{col_w[2]}}{RESET} "
+            f"{CYAN}║{RESET}"
+        )
+        print(f"{CYAN}{hdr}{RESET}")
+
+        for i, (year, data) in enumerate(sorted(results.items())):
+            t    = data["mean_temperature"]
+            meas = data["measurements"]
+            row_bg = "\033[48;5;235m" if i % 2 == 0 else ""
+            print(
+                f"{row_bg}{CYAN}║{RESET}{row_bg} {YELLOW}{year:^{col_w[0]}}{RESET}{row_bg} "
+                f"{CYAN}║{RESET}{row_bg} {WHITE}{t:^{col_w[1]}.2f}{RESET}{row_bg} "
+                f"{CYAN}║{RESET}{row_bg} {WHITE}{meas:^{col_w[2]},}{RESET}{row_bg} "
+                f"{CYAN}║{RESET}"
+            )
+
+        # Summary row
+        avg_temp   = sum(all_temps) / len(all_temps)
+        total_meas = sum(v["measurements"] for v in results.values())
+        print(f"{CYAN}{mid}{RESET}")
+        print(
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{'AVG':^{col_w[0]}}{RESET} "
+            f"{CYAN}║{RESET} {BOLD}{GREEN}{avg_temp:^{col_w[1]}.2f}{RESET} "
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{total_meas:^{col_w[2]},}{RESET} "
+            f"{CYAN}║{RESET}"
+        )
+        print(f"{CYAN}{bot}{RESET}")
+        print(f"\n{DIM}  {len(results)} years · {total_meas:,} total measurements · avg {avg_temp:.2f}°C{RESET}\n")
+
+    # --- Detect word count format: {word: int} ---
+    elif all(isinstance(v, int) for v in results.values()):
+        sorted_words = sorted(results.items(), key=lambda x: x[1], reverse=True)
+        max_count = sorted_words[0][1] if sorted_words else 1
+        max_word_len = max(len(w) for w, _ in sorted_words)
+        max_word_len = max(max_word_len, 8)
+        BAR_W = 20
+
+        def count_bar(c):
+            filled = max(1, int((c / max_count) * BAR_W))
+            # color by rank ratio
+            ratio = c / max_count
+            if ratio > 0.7:
+                bar_col = YELLOW
+            elif ratio > 0.35:
+                bar_col = GREEN
+            else:
+                bar_col = BLUE
+            return bar_col + "█" * filled + DIM + "░" * (BAR_W - filled) + RESET
+
+        col_w = [max_word_len, 10]
+        top = f"╔{'═'*(col_w[0]+2)}╦{'═'*(col_w[1]+2)}╗"
+        hdr = f"╠{'═'*(col_w[0]+2)}╬{'═'*(col_w[1]+2)}╣"
+        bot = f"╚{'═'*(col_w[0]+2)}╩{'═'*(col_w[1]+2)}╝"
+
+        total_words = sum(results.values())
+        unique_words = len(results)
+
+        print(f"\n{CYAN}{BOLD}  [WC]  Word Count Results -- Job {job_id[:8]}...{RESET}\n")
+        print(f"{CYAN}{top}{RESET}")
+        print(
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{'Word':<{col_w[0]}}{RESET} "
+            f"{CYAN}║{RESET} {BOLD}{WHITE}{'Count':^{col_w[1]}}{RESET} "
+            f"{CYAN}║{RESET}"
+        )
+        print(f"{CYAN}{hdr}{RESET}")
+
+        for i, (word, count) in enumerate(sorted_words):
+            row_bg = "\033[48;5;235m" if i % 2 == 0 else ""
+            rank_col = YELLOW if i < 3 else WHITE
+            print(
+                f"{row_bg}{CYAN}║{RESET}{row_bg} {rank_col}{word:<{col_w[0]}}{RESET}{row_bg} "
+                f"{CYAN}║{RESET}{row_bg} {rank_col}{count:^{col_w[1]},}{RESET}{row_bg} "
+                f"{CYAN}║{RESET}"
+            )
+
+        print(f"{CYAN}{bot}{RESET}")
+        print(f"\n{DIM}  {unique_words} unique words · {total_words:,} total occurrences{RESET}\n")
+
+
+    else:
+        # True generic fallback for unknown result shapes
+        keys  = list(results.keys())
+        max_k = max(max(len(str(k)) for k in keys), 10)
+        max_v = max(max(len(str(v)) for v in results.values()), 10)
+
+        print(f"\n{CYAN}{BOLD}  [MR]  MapReduce Results -- Job {job_id[:8]}...{RESET}\n")
+        print(f"{CYAN}╔{'═'*(max_k+2)}╦{'═'*(max_v+2)}╗{RESET}")
+        print(f"{CYAN}║{RESET} {BOLD}{WHITE}{'Key':<{max_k}}{RESET} {CYAN}║{RESET} {BOLD}{WHITE}{'Value':<{max_v}}{RESET} {CYAN}║{RESET}")
+        print(f"{CYAN}╠{'═'*(max_k+2)}╬{'═'*(max_v+2)}╣{RESET}")
+        for i, (k, v) in enumerate(results.items()):
+            row_bg = "\033[48;5;235m" if i % 2 == 0 else ""
+            print(f"{row_bg}{CYAN}║{RESET}{row_bg} {YELLOW}{str(k):<{max_k}}{RESET}{row_bg} {CYAN}║{RESET}{row_bg} {WHITE}{str(v):<{max_v}}{RESET}{row_bg} {CYAN}║{RESET}")
+        print(f"{CYAN}╚{'═'*(max_k+2)}╩{'═'*(max_v+2)}╝{RESET}\n")
+
+
+def get_results(job_id: str):
+    headers = get_headers()
+    try:
+        print(f"\033[1;32mAttempting to retrieve results for job {job_id}...\033[0m")
+        response = requests.get(f"{API_BASE_URL}/results/{job_id}", headers=headers)
+
+        response.raise_for_status()
+        
+        results = response.json()
+        _print_results_table(job_id, results)
+        return results
+
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 404:
+            print(f"\033[91m[Error 404 - Not Found]. Job {job_id} or its results were not found.\033[0m")
+        elif response.status_code == 400:
+            print(f"\033[91m[Error 400 - Bad Request]. {response.json().get('detail')}\033[0m")
+        else:
+            print(f"\033[91mFailed to fetch results: {e}\033[0m")
+        return None
     
 
 if __name__ == "__main__":
@@ -356,9 +520,12 @@ if __name__ == "__main__":
     # -- get user jobs --
     subparsers.add_parser("jobs", help="Get all current jobs for your user")
 
-    # -- get specific job 
     spec_parser = subparsers.add_parser("job", help="Get a specific job")
     spec_parser.add_argument("--job_id", required=True, help="ID of the job to retrieve")
+
+    # -- get job results
+    res_parser = subparsers.add_parser("results", help="Get results for a completed job")
+    res_parser.add_argument("--job_id", required=True, help="ID of the job to retrieve results for")
 
     
 
@@ -404,6 +571,10 @@ if __name__ == "__main__":
     
     if args.command == "job":
         get_job(args.job_id)
+        sys.exit(0)
+    
+    if args.command == "results":
+        get_results(args.job_id)
         sys.exit(0)
     
     if args.command == "delete":
