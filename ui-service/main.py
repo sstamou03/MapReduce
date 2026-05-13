@@ -402,6 +402,64 @@ async def get_all_jobs_admin(
     logger.info(f"Admin user {admin_id} requested to see all jobs.")
     return crud.get_all_jobs(db)
 
+@app.post("/admin/users", tags=["Admin"])
+async def create_user_admin(
+    user_data: schemas.UserCreate,
+    admin_id: str = Depends(get_admin_user)
+):
+    '''
+    admin ONLY: Create a new user in Keycloak.
+    '''
+    keycloak_internal_url = os.environ.get("KEYCLOAK_INTERNAL_URL", "http://mapreduce-keycloak:8080")
+    admin_user = os.environ.get("KEYCLOAK_ADMIN", "admin")
+    admin_pass = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # 1. Get admin token from master realm
+            token_url = f"{keycloak_internal_url}/realms/master/protocol/openid-connect/token"
+            token_payload = {
+                "client_id": "admin-cli",
+                "username": admin_user,
+                "password": admin_pass,
+                "grant_type": "password"
+            }
+            token_res = await client.post(token_url, data=token_payload)
+            token_res.raise_for_status()
+            access_token = token_res.json()["access_token"]
+
+            # 2. Create user in MapReduce-Realm
+            create_url = f"{keycloak_internal_url}/admin/realms/MapReduce-Realm/users"
+            headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
+            new_user_payload = {
+                "username": user_data.username,
+                "enabled": True,
+                "credentials": [
+                    {
+                        "type": "password",
+                        "value": user_data.password,
+                        "temporary": False
+                    }
+                ]
+            }
+            create_res = await client.post(create_url, headers=headers, json=new_user_payload)
+            create_res.raise_for_status()
+            
+            logger.info(f"Admin {admin_id} successfully created Keycloak user {user_data.username}.")
+            return {"message": f"User {user_data.username} created successfully."}
+            
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Failed to create user in Keycloak: {e.response.text}")
+        if e.response.status_code == 409:
+            raise HTTPException(status_code=409, detail="User already exists.")
+        raise HTTPException(status_code=500, detail="Failed to create user in Keycloak.")
+    except Exception as e:
+        logger.error(f"Error connecting to Keycloak to create user: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 ### TO GO TO MANAGER, NOT HERE
 @app.post("/admin/nodes", tags=["Admin"])
 async def configure_nodes(config: dict):

@@ -305,6 +305,31 @@ def get_all_jobs():
             print(f"\033[91mFailed to fetch jobs: {e}\033[0m")
         return None
 
+# -- create user (admin only) : POST /admin/users
+def create_user(username: str, password: str):
+    headers = get_headers()
+    payload = {
+        "username": username,
+        "password": password
+    }
+    try:
+        print(f"\033[1;32mAttempting to create Keycloak user '{username}'...\033[0m")
+        response = requests.post(f"{API_BASE_URL}/admin/users", headers=headers, json=payload)
+        response.raise_for_status()
+        
+        print(f"\033[1;32mSuccessfully created user '{username}'!\033[0m")
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        if response.status_code == 401:
+            print("\033[91m[Error 401 - Unauthorized]. Please run 'python3 cli.py login' first.\033[0m")
+        elif response.status_code == 403:
+            print("\033[91m[Error 403 - Forbidden]. You're not an admin, don't try access admin endpoints.\033[0m")
+        elif response.status_code == 409:
+            print(f"\033[91m[Error 409 - Conflict]. User '{username}' already exists.\033[0m")
+        else:
+            print(f"\033[91mFailed to create user: {e}\033[0m")
+        return None
+
 # -- delete user data (admin only) : DELETE /admin/users/{user_id}
 def delete_user(user_id: str):
     headers = get_headers()
@@ -541,6 +566,11 @@ if __name__ == "__main__":
     # -- get all jobs --
     subparsers.add_parser("all-jobs", help="-ADMIN- : Get all jobs system-wide")
 
+    # -- create user --
+    create_user_parser = subparsers.add_parser("create-user", help="-ADMIN- : Create a new Keycloak user")
+    create_user_parser.add_argument("--username", required=True, help="Username for the new user")
+    create_user_parser.add_argument("--password", required=True, help="Password for the new user")
+
     # -- delete user data --
     del_user_parser = subparsers.add_parser("delete-user", help="-ADMIN- : Delete all data for a specific user")
     del_user_parser.add_argument("--user_id", required=True, help="ID of the user to delete data for")
@@ -587,6 +617,10 @@ if __name__ == "__main__":
     
     if args.command == "all-jobs":
         get_all_jobs()
+        sys.exit(0)
+        
+    if args.command == "create-user":
+        create_user(args.username, args.password)
         sys.exit(0)
         
     if args.command == "delete-user":

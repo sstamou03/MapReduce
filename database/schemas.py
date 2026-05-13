@@ -116,3 +116,10 @@ class FileUploadResponse(BaseModel):
     input_ref: Optional[str] = None
     mapper_ref: Optional[str] = None
     reducer_ref: Optional[str] = None
+
+class UserCreate(BaseModel):
+    """
+    Request body for creating a new user in Keycloak.
+    """
+    username: str
+    password: str
